@@ -28,12 +28,20 @@ export default function HomePage() {
               </a>
             </li>
           </ul>
-          <a
-            className="font-display text-[13px] border border-ink px-4 py-2 rounded-doc no-underline text-ink whitespace-nowrap transition-colors duration-150 hover:bg-ink hover:text-paperwhite"
-            href="#"
-          >
-            Download
-          </a>
+          <div className="flex items-center gap-3">
+            <a
+              className="font-display text-[13px] text-ink-soft no-underline transition-colors duration-150 hover:text-pen-blue"
+              href="#"
+            >
+              Log in
+            </a>
+            <a
+              className="font-display text-[13px] border border-ink px-4 py-2 rounded-doc no-underline text-ink whitespace-nowrap transition-colors duration-150 hover:bg-ink hover:text-paperwhite"
+              href="#"
+            >
+              Sign in
+            </a>
+          </div>
         </div>
       </header>
 
