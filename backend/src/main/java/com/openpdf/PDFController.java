@@ -74,6 +74,14 @@ public Map<String, String> merge(@RequestBody MergeRequest request) {
         return "Page deleted";
     }
 
+    @PostMapping("/html-to-pdf")
+    public Map<String, String> htmlToPdf(@RequestBody Map<String, String> payload) {
+        String html = payload.get("html");
+        String fileName = payload.getOrDefault("fileName", "html-export");
+        String path = pdfService.htmlToPdf(html, fileName);
+        return Map.of("path", path);
+    }
+
     @PostMapping("/chat")
     public String chat(@RequestBody String prompt) {
         return aiService.answer(prompt);

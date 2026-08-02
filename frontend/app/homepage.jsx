@@ -73,6 +73,12 @@ export default function HomePage() {
           </ul>
           <div className="flex items-center gap-3">
             <Link
+              className="font-display text-[13px] text-ink-soft no-underline whitespace-nowrap transition-colors duration-150 hover:text-pen-blue"
+              href="/html-to-pdf"
+            >
+              HTML → PDF
+            </Link>
+            <Link
               className="font-display text-[13px] border border-ink px-4 py-2 rounded-doc no-underline text-ink whitespace-nowrap transition-colors duration-150 hover:bg-ink hover:text-paperwhite"
               href="/editor"
             >
@@ -240,6 +246,25 @@ export default function HomePage() {
                   ✗ {error}
                 </p>
               )}
+            </div>
+          </div>
+        </section>
+
+        <section className="border-t border-line py-16">
+          <div className="max-w-[1180px] mx-auto px-8">
+            <div className="border border-line rounded-doc bg-paper p-8 max-w-3xl mx-auto flex items-center justify-between gap-6 flex-wrap">
+              <div>
+                <h2 className="font-display text-lg mb-2 tracking-[-0.01em]">Convert HTML to PDF</h2>
+                <p className="text-[14.5px] text-ink-soft">
+                  Paste HTML, preview it live, export a paginated PDF — runs entirely in your browser.
+                </p>
+              </div>
+              <Link
+                href="/html-to-pdf"
+                className="font-display font-medium text-sm bg-ink text-paperwhite border border-ink px-[22px] py-[13px] rounded-doc inline-flex items-center gap-2 whitespace-nowrap no-underline hover:shadow-[0_3px_0_#b23a2e] transition-shadow"
+              >
+                Open converter →
+              </Link>
             </div>
           </div>
         </section>

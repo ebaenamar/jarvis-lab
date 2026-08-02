@@ -5,8 +5,11 @@ import com.lowagie.text.pdf.PdfCopy;
 import com.lowagie.text.pdf.PdfReader;
 import com.lowagie.text.pdf.PdfStamper;
 import org.springframework.stereotype.Service;
+import org.xhtmlrenderer.pdf.ITextRenderer;
 
+import java.io.File;
 import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -43,6 +46,37 @@ public class PDFService {
             return outputPath;
         } catch (Exception e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    public String htmlToPdf(String html, String fileName) {
+        try {
+            if (html == null || html.isBlank()) {
+                throw new IllegalArgumentException("HTML content is required");
+            }
+
+            File uploadsDir = new File("uploads");
+            if (!uploadsDir.exists()) {
+                uploadsDir.mkdirs();
+            }
+
+            String safeName = (fileName == null || fileName.isBlank())
+                    ? "html-export-" + System.currentTimeMillis() + ".pdf"
+                    : fileName.endsWith(".pdf") ? fileName : fileName + ".pdf";
+
+            String outputPath = new File(uploadsDir, safeName).getAbsolutePath();
+
+            ITextRenderer renderer = new ITextRenderer();
+            renderer.setDocumentFromString(html);
+            renderer.layout();
+
+            try (OutputStream outputStream = new FileOutputStream(outputPath)) {
+                renderer.createPDF(outputStream);
+            }
+
+            return outputPath;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to convert HTML to PDF", e);
         }
     }
 
