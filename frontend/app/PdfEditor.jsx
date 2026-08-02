@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 
+const pdfWorker = new URL("../node_modules/pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 export default function PdfEditor({ initialPath }) {
@@ -22,8 +24,7 @@ export default function PdfEditor({ initialPath }) {
     setError(null);
     try {
       const pdfjsLib = await import("pdfjs-dist/build/pdf");
-      pdfjsLib.GlobalWorkerOptions.workerSrc =
-        `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.js`;
+      pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
       const pdf = await pdfjsLib.getDocument(fileUrl(path)).promise;
       const newPages = [];

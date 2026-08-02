@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+const pdfWorker = new URL("../node_modules/pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+
 const RENDER_SCALE = 1.5;
 const BLANK_W = 612; // US Letter, PDF points
 const BLANK_H = 792;
@@ -13,9 +15,7 @@ let _pdfjs = null;
 async function getPdfjs() {
   if (_pdfjs) return _pdfjs;
   const lib = await import("pdfjs-dist");
-  // If the worker fails to load, check your installed pdfjs-dist version —
-  // older versions ship a .js worker, newer ones a .mjs worker.
-  lib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${lib.version}/pdf.worker.min.mjs`;
+  lib.GlobalWorkerOptions.workerSrc = pdfWorker;
   _pdfjs = lib;
   return lib;
 }
