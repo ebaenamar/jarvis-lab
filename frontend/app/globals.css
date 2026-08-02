@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #efece3;
+  --color-paper-dim: #e4e0d3;
+  --color-paperwhite: #fbfaf6;
+  --color-ink: #1c1b19;
+  --color-ink-soft: #59564d;
+  --color-line: #cac5b6;
+  --color-pen-blue: #2c4a73;
+  --color-pen-red: #b23a2e;
+
+  --font-display: var(--font-jetbrains), ui-monospace, monospace;
+  --font-body: var(--font-inter), -apple-system, sans-serif;
+  --font-annotation: var(--font-kalam), cursive;
+
+  --radius-doc: 3px;
+}
+
+@layer base {
+  body {
+    @apply bg-paper text-ink font-body antialiased leading-relaxed;
+  }
+
+  a {
+    @apply text-inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid #2c4a73;
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
