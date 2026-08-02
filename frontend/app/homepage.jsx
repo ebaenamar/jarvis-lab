@@ -1,5 +1,6 @@
 "use client";
 
+import PdfEditor from "./PdfEditor";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -226,6 +227,7 @@ export default function HomePage() {
                   ✓ Uploaded — saved at {result}
                 </p>
               )}
+              {result && <PdfEditor initialPath={result} />}
 
               {error && (
                 <p className="mt-2 text-[13px] text-pen-red font-display">

@@ -2,7 +2,9 @@ com\openpdf\User.class
 com\openpdf\UserService.class
 com\openpdf\Main.class
 com\openpdf\PDFUtils.class
+com\openpdf\OrderRequest.class
 com\openpdf\SignupRequest.class
+com\openpdf\SplitRequest.class
 com\openpdf\SecurityConfig.class
 com\openpdf\LoginRequest.class
 com\openpdf\UserRepository.class
