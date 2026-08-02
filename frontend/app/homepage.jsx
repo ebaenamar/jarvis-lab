@@ -126,13 +126,13 @@ export default function HomePage() {
               <div className="flex items-center gap-5 mb-10">
                 <a
                   className="font-display font-medium text-sm bg-ink text-paperwhite border border-ink px-[22px] py-[13px] rounded-doc no-underline inline-flex items-center gap-2 transition-transform duration-150 hover:-translate-y-px hover:shadow-[0_4px_0_#b23a2e]"
-                  href="#"
+                  href="https://github.com/student1919/OpenPDF"
                 >
                   Download for free →
                 </a>
                 <a
                   className="font-display text-sm text-ink no-underline border-b border-line pb-0.5 transition-colors duration-150 hover:border-ink"
-                  href="#source"
+                  href="https://github.com/student1919/OpenPDF"
                 >
                   View source on GitHub
                 </a>
