@@ -38,3 +38,27 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* PDF.js text layer — enables text selection over the rendered canvas */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  transform-origin: 0 0;
+  z-index: 1;
+}
+
+.textLayer span,
+.textLayer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.textLayer ::selection {
+  background: rgba(44, 74, 115, 0.35);
+}
