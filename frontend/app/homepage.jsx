@@ -305,7 +305,7 @@ export default function HomePage() {
                 <span className="font-display text-[11px] font-bold text-pen-red border border-pen-red w-5 h-5 rounded-full flex items-center justify-center mb-[18px]">3</span>
                 <h3 className="font-display text-base mb-2.5 tracking-[-0.01em]">Audited by anyone</h3>
                 <p className="text-[14.5px] text-ink-soft">
-                  The full source is public under MIT. Read it, fork it,
+                  The full source is public under Sundai. Read it, fork it,
                   ship your own build — no CLA, no dual-licensing catch.
                 </p>
               </div>
@@ -338,7 +338,7 @@ export default function HomePage() {
 
       <footer className="py-12 border-t border-line">
         <div className="max-w-[1180px] mx-auto px-8 flex justify-between items-center flex-wrap gap-4 font-display text-xs text-ink-soft">
-          <span>© {new Date().getFullYear()} openPDF · MIT License</span>
+          <span>© {new Date().getFullYear()} openPDF </span>
           <ul className="flex gap-[22px] list-none">
             <li><a className="no-underline text-ink-soft hover:text-pen-blue" href="#">GitHub</a></li>
             <li><a className="no-underline text-ink-soft hover:text-pen-blue" href="#">Docs</a></li>
