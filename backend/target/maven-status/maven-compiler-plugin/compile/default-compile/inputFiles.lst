@@ -1,5 +1,12 @@
-C:\Users\aweso\Documents\OpenPDF\backend\src\main\java\com\openpdf\AIService.java
-C:\Users\aweso\Documents\OpenPDF\backend\src\main\java\com\openpdf\Main.java
-C:\Users\aweso\Documents\OpenPDF\backend\src\main\java\com\openpdf\PDFController.java
-C:\Users\aweso\Documents\OpenPDF\backend\src\main\java\com\openpdf\PDFService.java
-C:\Users\aweso\Documents\OpenPDF\backend\src\main\java\com\openpdf\PDFUtils.java
+/Users/camdenascenso/OpenPDF/backend/src/main/java/com/openpdf/AIService.java
+/Users/camdenascenso/OpenPDF/backend/src/main/java/com/openpdf/AuthController.java
+/Users/camdenascenso/OpenPDF/backend/src/main/java/com/openpdf/LoginRequest.java
+/Users/camdenascenso/OpenPDF/backend/src/main/java/com/openpdf/Main.java
+/Users/camdenascenso/OpenPDF/backend/src/main/java/com/openpdf/PDFController.java
+/Users/camdenascenso/OpenPDF/backend/src/main/java/com/openpdf/PDFService.java
+/Users/camdenascenso/OpenPDF/backend/src/main/java/com/openpdf/PDFUtils.java
+/Users/camdenascenso/OpenPDF/backend/src/main/java/com/openpdf/SecurityConfig.java
+/Users/camdenascenso/OpenPDF/backend/src/main/java/com/openpdf/SignupRequest.java
+/Users/camdenascenso/OpenPDF/backend/src/main/java/com/openpdf/User.java
+/Users/camdenascenso/OpenPDF/backend/src/main/java/com/openpdf/UserRepository.java
+/Users/camdenascenso/OpenPDF/backend/src/main/java/com/openpdf/UserService.java
