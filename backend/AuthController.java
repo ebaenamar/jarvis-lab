@@ -1,7 +1,9 @@
 package OpenPDF.controller;
 
+import OpenPDF.dto.LoginRequest;
 import OpenPDF.dto.SignupRequest;
 import OpenPDF.model.User;
+import OpenPDF.repository.UserRepository;
 import OpenPDF.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -18,16 +20,17 @@ import java.util.Map;
 public class AuthController {
 
     private final UserService userService;
+    private final UserRepository userRepository;
 
-    public AuthController(UserService userService) {
+    public AuthController(UserService userService, UserRepository userRepository) {
         this.userService = userService;
+        this.userRepository = userRepository;
     }
 
     @PostMapping("/signup")
     public ResponseEntity<?> signup(@Valid @RequestBody SignupRequest request) {
         try {
             User user = userService.register(request.getUsername(), request.getPassword());
-            // Only ever return the id/username — the hash never leaves the server.
             return ResponseEntity
                     .status(HttpStatus.CREATED)
                     .body(Map.of("userId", user.getUserId(), "username", user.getUsername()));
@@ -36,5 +39,22 @@ public class AuthController {
                     .status(HttpStatus.CONFLICT)
                     .body(Map.of("error", e.getMessage()));
         }
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request) {
+        User user = userRepository.findByUsername(request.getUsername())
+                .orElse(null);
+
+        if (user == null || !userService.verifyPassword(request.getPassword(), user.getHashedPassword())) {
+            return ResponseEntity
+                    .status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Invalid username or password"));
+        }
+
+        return ResponseEntity.ok(Map.of(
+                "userId", user.getUserId(),
+                "username", user.getUsername()
+        ));
     }
 }

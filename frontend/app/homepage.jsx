@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 export default function HomePage() {
@@ -70,18 +71,18 @@ export default function HomePage() {
             </li>
           </ul>
           <div className="flex items-center gap-3">
-            
+            <Link
               className="font-display text-[13px] text-ink-soft no-underline transition-colors duration-150 hover:text-pen-blue"
-              href="#"
+              href="/login"
             >
               Log in
-            </a>
-            
+            </Link>
+            <Link
               className="font-display text-[13px] border border-ink px-4 py-2 rounded-doc no-underline text-ink whitespace-nowrap transition-colors duration-150 hover:bg-ink hover:text-paperwhite"
-              href="#"
+              href="/signup"
             >
-              Sign in
-            </a>
+              Sign up
+            </Link>
           </div>
         </div>
       </header>
@@ -110,13 +111,13 @@ export default function HomePage() {
                 built by people who actually read PDFs for a living.
               </p>
               <div className="flex items-center gap-5 mb-10">
-                
+                <a
                   className="font-display font-medium text-sm bg-ink text-paperwhite border border-ink px-[22px] py-[13px] rounded-doc no-underline inline-flex items-center gap-2 transition-transform duration-150 hover:-translate-y-px hover:shadow-[0_4px_0_#b23a2e]"
                   href="#"
                 >
                   Download for free →
                 </a>
-                
+                <a
                   className="font-display text-sm text-ink no-underline border-b border-line pb-0.5 transition-colors duration-150 hover:border-ink"
                   href="#source"
                 >

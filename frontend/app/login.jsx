@@ -1,17 +1,44 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const router = useRouter();
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     setSubmitting(true);
-    // Wire this up to your auth provider.
-    setTimeout(() => setSubmitting(false), 900);
+    setError("");
+
+    try {
+      const url = `${process.env.NEXT_PUBLIC_API_URL}/api/auth/login`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const contentType = res.headers.get("content-type") || "";
+      const isJson = contentType.includes("application/json");
+      const payload = isJson ? await res.json() : await res.text();
+
+      if (!res.ok) {
+        const message = isJson ? payload?.error || "Login failed" : payload || "Login failed";
+        throw new Error(message);
+      }
+
+      router.push("/");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Login failed";
+      setError(message.includes("<!DOCTYPE") ? "The backend is not responding at the configured URL." : message);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -44,18 +71,18 @@ export default function LoginPage() {
             <form onSubmit={handleSubmit} className="flex flex-col gap-5">
               <div>
                 <label
-                  htmlFor="email"
+                  htmlFor="username"
                   className="block font-display text-xs uppercase tracking-[0.04em] text-ink-soft mb-2"
                 >
-                  Email
+                  Username
                 </label>
                 <input
-                  id="email"
-                  type="email"
+                  id="username"
+                  type="text"
                   required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="ada"
                   className="w-full bg-transparent border-0 border-b border-line pb-2 text-[15px] text-ink placeholder:text-ink-soft/60 focus:outline-none focus:border-pen-blue transition-colors"
                 />
               </div>
@@ -85,6 +112,10 @@ export default function LoginPage() {
                   className="w-full bg-transparent border-0 border-b border-line pb-2 text-[15px] text-ink placeholder:text-ink-soft/60 focus:outline-none focus:border-pen-blue transition-colors"
                 />
               </div>
+
+              {error ? (
+                <p className="text-sm text-pen-red">{error}</p>
+              ) : null}
 
               <button
                 type="submit"

@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 export default function SignupPage() {
@@ -7,28 +8,39 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const router = useRouter();
 
   async function handleSubmit(e) {
-  e.preventDefault();
-  setSubmitting(true);
-  try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/signup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: name, password }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || "Signup failed");
+    e.preventDefault();
+    setSubmitting(true);
+    setError("");
+
+    try {
+      const url = `${process.env.NEXT_PUBLIC_API_URL}/api/auth/signup`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: name, password }),
+      });
+
+      const contentType = res.headers.get("content-type") || "";
+      const isJson = contentType.includes("application/json");
+      const payload = isJson ? await res.json() : await res.text();
+
+      if (!res.ok) {
+        const message = isJson ? payload?.error || "Signup failed" : payload || "Signup failed";
+        throw new Error(message);
+      }
+
+      router.push("/login");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Signup failed";
+      setError(message.includes("<!DOCTYPE") ? "The backend is not responding at the configured URL." : message);
+    } finally {
+      setSubmitting(false);
     }
-    const data = await res.json();
-    // handle success, e.g. redirect to login
-  } catch (err) {
-    console.error(err);
-  } finally {
-    setSubmitting(false);
   }
-}
 
   return (
     <main className="min-h-screen bg-paper text-ink flex flex-col">
@@ -115,6 +127,10 @@ export default function SignupPage() {
                   at least 8 characters
                 </span>
               </div>
+
+              {error ? (
+                <p className="text-sm text-pen-red">{error}</p>
+              ) : null}
 
               <button
                 type="submit"
