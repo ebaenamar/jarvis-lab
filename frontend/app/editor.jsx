@@ -33,7 +33,15 @@ async function getPdfjs() {
 }
 
 function makeEntry(type, originalIndex = null) {
-  return { id: nextId(), type, originalIndex, rotation: 0, viewport: null, annotations: [] };
+  return {
+    id: nextId(),
+    type,
+    originalIndex,
+    rotation: 0,
+    viewport: null,
+    annotations: [],
+    textItems: [],
+  };
 }
 
 // Canonical annotation coordinates are always PDF points in the page's
@@ -125,8 +133,32 @@ export default function EditPdfPage() {
       const ctx = canvas.getContext("2d");
       await page.render({ canvasContext: ctx, viewport }).promise;
       if (cancelled) return;
+
+      const pdfjsLib = await getPdfjs();
+      const content = await page.getTextContent();
+      const textItems = content.items
+        .filter((item) => item.str && item.str.trim())
+        .map((item, index) => {
+          const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+          const fontHeight = Math.max(8, Math.hypot(tx[2], tx[3]));
+
+          return {
+            id: `${entry.id}-text-${index}`,
+            text: item.str,
+            x: tx[4],
+            top: tx[5] - fontHeight,
+            width: Math.max(1, Math.abs(item.width * RENDER_SCALE)),
+            height: fontHeight,
+            size: fontHeight / RENDER_SCALE,
+          };
+        });
+
       setCanvasSize({ w: viewport.width, h: viewport.height });
-      setPageOrder((prev) => prev.map((en, i) => (i === currentIndex ? { ...en, viewport } : en)));
+      setPageOrder((prev) =>
+        prev.map((en, i) =>
+          i === currentIndex ? { ...en, viewport, textItems } : en
+        )
+      );
     })();
 
     return () => {
@@ -259,6 +291,45 @@ export default function EditPdfPage() {
     }
   }
 
+  function editExistingText(item) {
+    if (!entry || entry.type === "blank") return;
+
+    const existing = entry.annotations.find(
+      (ann) => ann.kind === "text-edit" && ann.sourceTextId === item.id
+    );
+
+    if (existing) {
+      setSelectedAnnotationId(existing.id);
+      setEditingTextId(existing.id);
+      return;
+    }
+
+    const c1 = toCanonical(entry, item.x, item.top);
+    const c2 = toCanonical(entry, item.x + item.width, item.top + item.height);
+    if (!c1 || !c2) return;
+
+    const ann = {
+      id: nextId(),
+      kind: "text-edit",
+      sourceTextId: item.id,
+      originalText: item.text,
+      text: item.text,
+      x: Math.min(c1[0], c2[0]),
+      y: Math.min(c1[1], c2[1]),
+      w: Math.abs(c2[0] - c1[0]),
+      h: Math.abs(c2[1] - c1[1]),
+      size: item.size,
+      fontFamily: "Helvetica",
+    };
+
+    updateCurrentEntry((en) => ({
+      ...en,
+      annotations: [...en.annotations, ann],
+    }));
+    setSelectedAnnotationId(ann.id);
+    setEditingTextId(ann.id);
+  }
+
   function handleOverlayClick(e) {
     if (!entry) return;
     if (tool === "text") {
@@ -376,7 +447,34 @@ export default function EditPdfPage() {
         for (const ann of en.annotations) {
           if (ann.kind === "text" && ann.text.trim()) {
             const font = await getEmbeddedTextFont(ann.fontFamily);
-            page.drawText(ann.text, { x: ann.x, y: ann.y - ann.size, size: ann.size, font, color: rgb(0.17, 0.29, 0.45) });
+            page.drawText(ann.text, {
+              x: ann.x,
+              y: ann.y - ann.size,
+              size: ann.size,
+              font,
+              color: rgb(0.17, 0.29, 0.45),
+            });
+          } else if (ann.kind === "text-edit" && ann.text.trim()) {
+            const font = await getEmbeddedTextFont(ann.fontFamily);
+
+            // Cover only the selected original text span, then draw the
+            // replacement. Other PDF content remains untouched.
+            page.drawRectangle({
+              x: ann.x,
+              y: ann.y,
+              width: Math.max(ann.w, 2),
+              height: Math.max(ann.h, ann.size + 2),
+              color: rgb(1, 1, 1),
+              opacity: 1,
+            });
+
+            page.drawText(ann.text, {
+              x: ann.x,
+              y: ann.y,
+              size: ann.size,
+              font,
+              color: rgb(0, 0, 0),
+            });
           } else if (ann.kind === "highlight") {
             page.drawRectangle({ x: ann.x, y: ann.y, width: ann.w, height: ann.h, color: rgb(1, 0.88, 0.3), opacity: 0.4 });
           } else if (ann.kind === "draw" && ann.points.length > 1) {
@@ -484,6 +582,7 @@ export default function EditPdfPage() {
             <div className="border-b border-line px-6 py-3 flex flex-wrap items-center gap-2">
               <button className={toolBtn("none", "Select")} onClick={() => setTool("none")}>Select</button>
               <button className={toolBtn("text", "Text")} onClick={() => setTool("text")}>+ Text</button>
+              <button className={toolBtn("edit-text", "Edit text")} onClick={() => setTool("edit-text")}>Edit text</button>
 
               <select
                 value={selectedTextAnnotation?.fontFamily || "Helvetica"}
@@ -568,7 +667,12 @@ export default function EditPdfPage() {
                     onMouseLeave={handlePointerUp}
                     className="absolute inset-0"
                     style={{
-                      cursor: tool === "text" ? "text" : tool === "highlight" || tool === "draw" ? "crosshair" : "default",
+                      cursor:
+                      tool === "text" || tool === "edit-text"
+                        ? "text"
+                        : tool === "highlight" || tool === "draw"
+                          ? "crosshair"
+                          : "default",
                     }}
                   >
                     {/* Highlights */}
@@ -665,6 +769,43 @@ export default function EditPdfPage() {
                       />
                     )}
 
+                    {/* Existing PDF text editing layer */}
+                    {tool === "edit-text" &&
+                      entry.textItems?.map((item) => {
+                        const selectedEdit = entry.annotations.find(
+                          (ann) => ann.kind === "text-edit" && ann.sourceTextId === item.id
+                        );
+
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              editExistingText(item);
+                            }}
+                            className={`absolute text-left overflow-hidden border ${
+                              selectedEdit?.id === selectedAnnotationId
+                                ? "border-pen-red bg-paperwhite/80"
+                                : "border-transparent hover:border-pen-blue hover:bg-paperwhite/50"
+                            }`}
+                            style={{
+                              left: item.x,
+                              top: item.top,
+                              width: Math.max(item.width, 8),
+                              height: Math.max(item.height, 12),
+                              fontFamily: getTextFontCss(selectedEdit?.fontFamily),
+                              fontSize: (selectedEdit?.size || item.size) * RENDER_SCALE,
+                              lineHeight: `${Math.max(item.height, 12)}px`,
+                              color: "transparent",
+                            }}
+                            title="Click to edit this text"
+                          >
+                            {selectedEdit?.text || item.text}
+                          </button>
+                        );
+                      })}
+
                     {/* Text annotations */}
                     {entry.annotations
                       .filter((a) => a.kind === "text")
@@ -721,6 +862,83 @@ export default function EditPdfPage() {
                           </div>
                         );
                       })}
+                    {/* Edited existing text */}
+                    {entry.annotations
+                      .filter((a) => a.kind === "text-edit")
+                      .map((ann) => {
+                        const d = toDisplay(entry, ann.x, ann.y + ann.h);
+                        if (!d) return null;
+
+                        const selected = selectedAnnotationId === ann.id;
+                        const isEditing = editingTextId === ann.id;
+
+                        return (
+                          <div
+                            key={ann.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedAnnotationId(ann.id);
+                              setEditingTextId(ann.id);
+                            }}
+                            className={`absolute group ${selected ? "ring-1 ring-pen-red" : ""}`}
+                            style={{
+                              left: d[0],
+                              top: d[1],
+                              minWidth: Math.max(ann.w * RENDER_SCALE, 24),
+                              minHeight: Math.max(ann.h * RENDER_SCALE, 16),
+                              background: "#fff",
+                            }}
+                          >
+                            {isEditing ? (
+                              <textarea
+                                autoFocus
+                                value={ann.text}
+                                onChange={(e) =>
+                                  updateCurrentEntry((en) => ({
+                                    ...en,
+                                    annotations: en.annotations.map((a) =>
+                                      a.id === ann.id ? { ...a, text: e.target.value } : a
+                                    ),
+                                  }))
+                                }
+                                onBlur={() => setEditingTextId(null)}
+                                className="font-annotation text-ink bg-paperwhite border border-pen-blue rounded-[2px] px-1 py-0.5 resize outline-none"
+                                style={{
+                                  fontFamily: getTextFontCss(ann.fontFamily),
+                                  fontSize: ann.size * RENDER_SCALE,
+                                  lineHeight: 1.1,
+                                  minWidth: Math.max(ann.w * RENDER_SCALE, 120),
+                                  minHeight: Math.max(ann.h * RENDER_SCALE, 24),
+                                }}
+                              />
+                            ) : (
+                              <div
+                                className="font-annotation text-ink whitespace-pre-wrap cursor-text px-0.5"
+                                style={{
+                                  fontFamily: getTextFontCss(ann.fontFamily),
+                                  fontSize: ann.size * RENDER_SCALE,
+                                  lineHeight: 1.1,
+                                }}
+                              >
+                                {ann.text}
+                              </div>
+                            )}
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeAnnotation(ann.id);
+                              }}
+                              className={`absolute -top-2 -right-2 flex w-4 h-4 items-center justify-center rounded-full bg-pen-red text-paperwhite text-[10px] leading-none ${
+                                selected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                              }`}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })}
+
                   </div>
                 </div>
               )}
