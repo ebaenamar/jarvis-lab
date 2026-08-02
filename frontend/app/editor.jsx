@@ -8,6 +8,18 @@ const RENDER_SCALE = 1.5;
 const BLANK_W = 612; // US Letter, PDF points
 const BLANK_H = 792;
 
+const TEXT_FONT_OPTIONS = [
+  { value: "Helvetica", label: "Helvetica", css: "Helvetica, Arial, sans-serif" },
+  { value: "Times-Roman", label: "Times Roman", css: '"Times New Roman", Times, serif' },
+  { value: "Courier", label: "Courier", css: '"Courier New", Courier, monospace' },
+];
+
+const TEXT_SIZE_OPTIONS = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 60, 72];
+
+function getTextFontCss(fontFamily) {
+  return TEXT_FONT_OPTIONS.find((font) => font.value === fontFamily)?.css || TEXT_FONT_OPTIONS[0].css;
+}
+
 let idCounter = 0;
 const nextId = () => ++idCounter;
 
@@ -62,6 +74,8 @@ export default function EditPdfPage() {
   const isPointerDown = useRef(false);
 
   const entry = pageOrder[currentIndex] || null;
+  const selectedTextAnnotation =
+    entry?.annotations.find((a) => a.id === selectedAnnotationId && a.kind === "text") || null;
 
   // --- Load a file -----------------------------------------------------
   async function handleFiles(fileList) {
@@ -224,6 +238,27 @@ export default function EditPdfPage() {
     return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
   }
 
+  function updateSelectedTextAnnotation(changes) {
+    if (!selectedTextAnnotation) return;
+    updateCurrentEntry((en) => ({
+      ...en,
+      annotations: en.annotations.map((a) =>
+        a.id === selectedTextAnnotation.id ? { ...a, ...changes } : a
+      ),
+    }));
+  }
+
+  function handleSelectedTextFontFamilyChange(e) {
+    updateSelectedTextAnnotation({ fontFamily: e.target.value });
+  }
+
+  function handleSelectedTextFontSizeChange(e) {
+    const size = Number(e.target.value);
+    if (Number.isFinite(size) && size > 0) {
+      updateSelectedTextAnnotation({ size });
+    }
+  }
+
   function handleOverlayClick(e) {
     if (!entry) return;
     if (tool === "text") {
@@ -233,7 +268,7 @@ export default function EditPdfPage() {
       const id = nextId();
       updateCurrentEntry((en) => ({
         ...en,
-        annotations: [...en.annotations, { id, kind: "text", x: canonical[0], y: canonical[1], text: "", size: 16 }],
+        annotations: [...en.annotations, { id, kind: "text", x: canonical[0], y: canonical[1], text: "", size: 16, fontFamily: "Helvetica" }],
       }));
       setSelectedAnnotationId(id);
       setEditingTextId(id);
@@ -308,8 +343,21 @@ export default function EditPdfPage() {
     try {
       const { PDFDocument, StandardFonts, rgb, degrees } = await import("pdf-lib");
       const outPdf = await PDFDocument.create();
-      const font = await outPdf.embedFont(StandardFonts.Helvetica);
       const srcPdf = fileBytesRef.current ? await PDFDocument.load(fileBytesRef.current.slice(0)) : null;
+      const embeddedFonts = new Map();
+      const standardFonts = {
+        Helvetica: StandardFonts.Helvetica,
+        "Times-Roman": StandardFonts.TimesRoman,
+        Courier: StandardFonts.Courier,
+      };
+
+      async function getEmbeddedTextFont(fontFamily) {
+        const fontName = standardFonts[fontFamily] || StandardFonts.Helvetica;
+        if (!embeddedFonts.has(fontName)) {
+          embeddedFonts.set(fontName, await outPdf.embedFont(fontName));
+        }
+        return embeddedFonts.get(fontName);
+      }
 
       for (const en of pageOrder) {
         let page;
@@ -327,6 +375,7 @@ export default function EditPdfPage() {
 
         for (const ann of en.annotations) {
           if (ann.kind === "text" && ann.text.trim()) {
+            const font = await getEmbeddedTextFont(ann.fontFamily);
             page.drawText(ann.text, { x: ann.x, y: ann.y - ann.size, size: ann.size, font, color: rgb(0.17, 0.29, 0.45) });
           } else if (ann.kind === "highlight") {
             page.drawRectangle({ x: ann.x, y: ann.y, width: ann.w, height: ann.h, color: rgb(1, 0.88, 0.3), opacity: 0.4 });
@@ -435,6 +484,35 @@ export default function EditPdfPage() {
             <div className="border-b border-line px-6 py-3 flex flex-wrap items-center gap-2">
               <button className={toolBtn("none", "Select")} onClick={() => setTool("none")}>Select</button>
               <button className={toolBtn("text", "Text")} onClick={() => setTool("text")}>+ Text</button>
+
+              <select
+                value={selectedTextAnnotation?.fontFamily || "Helvetica"}
+                onChange={handleSelectedTextFontFamilyChange}
+                disabled={!selectedTextAnnotation}
+                aria-label="Text font family"
+                className="font-display text-xs px-2 py-2 rounded-doc border border-line bg-paperwhite text-ink-soft disabled:opacity-40 disabled:pointer-events-none hover:border-ink transition-colors"
+              >
+                {TEXT_FONT_OPTIONS.map((font) => (
+                  <option key={font.value} value={font.value}>
+                    {font.label}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={selectedTextAnnotation?.size || 16}
+                onChange={handleSelectedTextFontSizeChange}
+                disabled={!selectedTextAnnotation}
+                aria-label="Text font size"
+                className="font-display text-xs px-2 py-2 rounded-doc border border-line bg-paperwhite text-ink-soft disabled:opacity-40 disabled:pointer-events-none hover:border-ink transition-colors"
+              >
+                {TEXT_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size}px
+                  </option>
+                ))}
+              </select>
+
               <button className={toolBtn("highlight", "Highlight")} onClick={() => setTool("highlight")}>Highlight</button>
               <button className={toolBtn("draw", "Draw")} onClick={() => setTool("draw")}>Draw</button>
 
@@ -621,12 +699,12 @@ export default function EditPdfPage() {
                                   setEditingTextId(null);
                                 }}
                                 className="font-annotation text-pen-blue bg-paperwhite/90 border border-pen-blue rounded-[2px] px-1 py-0.5 resize outline-none"
-                                style={{ fontSize: ann.size, minWidth: 120 }}
+                                style={{ fontSize: ann.size, fontFamily: getTextFontCss(ann.fontFamily), minWidth: 120 }}
                               />
                             ) : (
                               <div
                                 className={`font-annotation text-pen-blue cursor-text whitespace-pre-wrap ${selected ? "ring-1 ring-pen-red px-0.5" : ""}`}
-                                style={{ fontSize: ann.size }}
+                                style={{ fontSize: ann.size, fontFamily: getTextFontCss(ann.fontFamily) }}
                               >
                                 {ann.text}
                                 <button
