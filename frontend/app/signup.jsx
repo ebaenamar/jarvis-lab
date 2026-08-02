@@ -58,7 +58,7 @@ export default function SignupPage() {
       <div className="flex-1 flex items-center justify-center px-6 py-16">
         <div className="w-full max-w-[420px]">
           <p className="font-display text-xs tracking-[0.08em] uppercase text-pen-blue flex items-center gap-2.5 mb-5 before:content-[''] before:block before:w-[22px] before:h-px before:bg-pen-blue">
-            MIT Licensed · Free forever
+            Sundai Project Hack 134
           </p>
           <h1 className="font-display font-bold text-[32px] leading-[1.1] tracking-[-0.02em] mb-2">
             Create your account.
