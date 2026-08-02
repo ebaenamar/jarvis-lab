@@ -7,6 +7,7 @@ com\openpdf\SignupRequest.class
 com\openpdf\SplitRequest.class
 com\openpdf\SecurityConfig.class
 com\openpdf\LoginRequest.class
+com\openpdf\MergeRequest.class
 com\openpdf\UserRepository.class
 com\openpdf\AuthController.class
 com\openpdf\PDFService.class

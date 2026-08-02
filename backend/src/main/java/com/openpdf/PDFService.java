@@ -46,6 +46,31 @@ public class PDFService {
         }
     }
 
+    // Concatenates multiple PDFs, in the given order, into a single output file.
+public String mergePdfs(List<String> inputPaths) {
+    if (inputPaths == null || inputPaths.isEmpty()) {
+        throw new IllegalArgumentException("At least one file is required to merge");
+    }
+    try {
+        String outputPath = "uploads/merged_" + System.currentTimeMillis() + ".pdf";
+        Document document = new Document();
+        PdfCopy copy = new PdfCopy(document, new FileOutputStream(outputPath));
+        document.open();
+        for (String inputPath : inputPaths) {
+            PdfReader reader = new PdfReader(inputPath);
+            int pages = reader.getNumberOfPages();
+            for (int p = 1; p <= pages; p++) {
+                copy.addPage(copy.getImportedPage(reader, p));
+            }
+            reader.close();
+        }
+        document.close();
+        return outputPath;
+    } catch (Exception e) {
+        throw new RuntimeException(e);
+    }
+}
+
     // splitPoints = starting page number of each new file after the first
     // e.g. 10-page doc, splitPoints=[4,7] -> files: [1-3], [4-6], [7-10]
     public List<String> splitPdf(String inputPath, List<Integer> splitPoints) {

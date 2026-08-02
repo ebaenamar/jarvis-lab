@@ -62,6 +62,12 @@ public class PDFController {
         return Map.of("files", paths);
     }
 
+@PostMapping("/merge")
+public Map<String, String> merge(@RequestBody MergeRequest request) {
+    String path = pdfService.mergePdfs(request.getPaths());
+    return Map.of("path", path);
+}
+
     @PostMapping("/delete-page")
     public String deletePage(@RequestParam String path, @RequestParam int page) {
         pdfService.deletePage(path, page);

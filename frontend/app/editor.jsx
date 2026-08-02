@@ -32,10 +32,11 @@ async function getPdfjs() {
   return lib;
 }
 
-function makeEntry(type, originalIndex = null) {
+function makeEntry(type, sourceId = null, originalIndex = null) {
   return {
     id: nextId(),
     type,
+    sourceId,
     originalIndex,
     rotation: 0,
     viewport: null,
@@ -61,7 +62,6 @@ function toDisplay(entry, x, y) {
 }
 
 export default function EditPdfPage() {
-  const [pdfDoc, setPdfDoc] = useState(null);
   const [pageOrder, setPageOrder] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [tool, setTool] = useState("none"); // none | text | highlight | draw
@@ -73,8 +73,15 @@ export default function EditPdfPage() {
   const [selectedAnnotationId, setSelectedAnnotationId] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitPoints, setSplitPoints] = useState(() => new Set());
 
-  const fileBytesRef = useRef(null);
+  // Maps sourceId -> { bytes: Uint8Array, doc: pdfjs document }. A single
+  // loaded PDF is one source; merging in more files adds more sources.
+  // A plain ref (not state) because pdfjs documents aren't serializable and
+  // mutations here always happen before the pageOrder update that triggers
+  // the render effects that read it.
+  const docsRef = useRef({});
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
   const thumbRefs = useRef({});
@@ -85,19 +92,41 @@ export default function EditPdfPage() {
   const selectedTextAnnotation =
     entry?.annotations.find((a) => a.id === selectedAnnotationId && a.kind === "text") || null;
 
-  // --- Load a file -----------------------------------------------------
-  async function handleFiles(fileList) {
-    const file = fileList?.[0];
-    if (!file || file.type !== "application/pdf") return;
-    const buf = await file.arrayBuffer();
-    fileBytesRef.current = new Uint8Array(buf);
-    setFileName(file.name);
+  // --- Load file(s) ------------------------------------------------------
+  // reset=true ("Open file"): clears everything and starts fresh — if
+  // multiple files are chosen, they're merged together into the new doc.
+  // reset=false ("Merge PDF"): appends the new file(s)' pages into the
+  // document that's already open, right after the current page.
+  async function loadFiles(fileList, { reset } = { reset: false }) {
+    const files = Array.from(fileList || []).filter((f) => f.type === "application/pdf");
+    if (!files.length) return;
 
     const pdfjsLib = await getPdfjs();
-    const doc = await pdfjsLib.getDocument({ data: fileBytesRef.current.slice(0) }).promise;
-    setPdfDoc(doc);
-    setPageOrder(Array.from({ length: doc.numPages }, (_, i) => makeEntry("original", i)));
-    setCurrentIndex(0);
+    const newEntries = [];
+    if (reset) docsRef.current = {};
+
+    for (const file of files) {
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      const sourceId = `src-${nextId()}`;
+      const doc = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
+      docsRef.current[sourceId] = { bytes, doc };
+      for (let i = 0; i < doc.numPages; i++) {
+        newEntries.push(makeEntry("original", sourceId, i));
+      }
+    }
+    if (!newEntries.length) return;
+
+    setFileName((prev) => (reset || !prev ? files[0].name : prev));
+
+    const insertAt = reset ? 0 : currentIndex + 1;
+    setPageOrder((prev) => {
+      if (reset) return newEntries;
+      const copy = [...prev];
+      copy.splice(insertAt, 0, ...newEntries);
+      return copy;
+    });
+    setCurrentIndex(insertAt);
   }
 
   // --- Render the current page onto the main canvas ---------------------
@@ -123,8 +152,9 @@ export default function EditPdfPage() {
         return;
       }
 
-      if (!pdfDoc) return;
-      const page = await pdfDoc.getPage(entry.originalIndex + 1);
+      const src = docsRef.current[entry.sourceId];
+      if (!src) return;
+      const page = await src.doc.getPage(entry.originalIndex + 1);
       const viewport = page.getViewport({ scale: RENDER_SCALE, rotation: entry.rotation });
       canvas.width = viewport.width;
       canvas.height = viewport.height;
@@ -165,7 +195,7 @@ export default function EditPdfPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfDoc, currentIndex, entry?.id, entry?.rotation, entry?.type]);
+  }, [currentIndex, entry?.id, entry?.rotation, entry?.type, entry?.sourceId]);
 
   // --- Render thumbnails --------------------------------------------------
   const structureKey = pageOrder.map((e) => `${e.id}:${e.type}:${e.rotation}`).join("|");
@@ -185,8 +215,9 @@ export default function EditPdfPage() {
         return;
       }
 
-      if (!pdfDoc) return;
-      const page = await pdfDoc.getPage(en.originalIndex + 1);
+      const src = docsRef.current[en.sourceId];
+      if (!src) return;
+      const page = await src.doc.getPage(en.originalIndex + 1);
       const base = page.getViewport({ scale: 1, rotation: en.rotation });
       const thumbScale = 84 / base.width;
       const viewport = page.getViewport({ scale: thumbScale, rotation: en.rotation });
@@ -196,7 +227,7 @@ export default function EditPdfPage() {
       await page.render({ canvasContext: ctx, viewport }).promise;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfDoc, structureKey]);
+  }, [structureKey]);
 
   // --- Page operations -----------------------------------------------------
   function updateCurrentEntry(fn) {
@@ -331,7 +362,7 @@ export default function EditPdfPage() {
   }
 
   function handleOverlayClick(e) {
-    if (!entry) return;
+    if (!entry || splitMode) return;
     if (tool === "text") {
       const { x, y } = getDisplayPoint(e);
       const canonical = toCanonical(entry, x, y);
@@ -350,7 +381,7 @@ export default function EditPdfPage() {
   }
 
   function handlePointerDown(e) {
-    if (!entry) return;
+    if (!entry || splitMode) return;
     if (tool === "highlight") {
       const p = getDisplayPoint(e);
       dragStartRef.current = p;
@@ -408,93 +439,155 @@ export default function EditPdfPage() {
   }
 
   // --- Export --------------------------------------------------------------
+  // Renders a list of page entries (which may pull from several source PDFs,
+  // in the merge case) down to bytes and triggers a browser download. Shared
+  // by the whole-document export and by each part of a split.
+  async function exportEntries(entries, downloadName) {
+    const { PDFDocument, StandardFonts, rgb, degrees } = await import("pdf-lib");
+    const outPdf = await PDFDocument.create();
+
+    const srcCache = new Map();
+    async function getSrcPdf(sourceId) {
+      if (!srcCache.has(sourceId)) {
+        const bytes = docsRef.current[sourceId]?.bytes;
+        srcCache.set(sourceId, bytes ? await PDFDocument.load(bytes.slice(0)) : null);
+      }
+      return srcCache.get(sourceId);
+    }
+
+    const embeddedFonts = new Map();
+    const standardFonts = {
+      Helvetica: StandardFonts.Helvetica,
+      "Times-Roman": StandardFonts.TimesRoman,
+      Courier: StandardFonts.Courier,
+    };
+
+    async function getEmbeddedTextFont(fontFamily) {
+      const fontName = standardFonts[fontFamily] || StandardFonts.Helvetica;
+      if (!embeddedFonts.has(fontName)) {
+        embeddedFonts.set(fontName, await outPdf.embedFont(fontName));
+      }
+      return embeddedFonts.get(fontName);
+    }
+
+    for (const en of entries) {
+      let page;
+      const srcPdf = en.type === "original" ? await getSrcPdf(en.sourceId) : null;
+      if (srcPdf) {
+        const [copied] = await outPdf.copyPages(srcPdf, [en.originalIndex]);
+        outPdf.addPage(copied);
+        page = copied;
+        if (en.rotation) {
+          const base = page.getRotation().angle;
+          page.setRotation(degrees((base + en.rotation) % 360));
+        }
+      } else {
+        page = outPdf.addPage([BLANK_W, BLANK_H]);
+      }
+
+      for (const ann of en.annotations) {
+        if (ann.kind === "text" && ann.text.trim()) {
+          const font = await getEmbeddedTextFont(ann.fontFamily);
+          page.drawText(ann.text, {
+            x: ann.x,
+            y: ann.y - ann.size,
+            size: ann.size,
+            font,
+            color: rgb(0.17, 0.29, 0.45),
+          });
+        } else if (ann.kind === "text-edit" && ann.text.trim()) {
+          const font = await getEmbeddedTextFont(ann.fontFamily);
+
+          // Cover only the selected original text span, then draw the
+          // replacement. Other PDF content remains untouched.
+          page.drawRectangle({
+            x: ann.x,
+            y: ann.y,
+            width: Math.max(ann.w, 2),
+            height: Math.max(ann.h, ann.size + 2),
+            color: rgb(1, 1, 1),
+            opacity: 1,
+          });
+
+          page.drawText(ann.text, {
+            x: ann.x,
+            y: ann.y,
+            size: ann.size,
+            font,
+            color: rgb(0, 0, 0),
+          });
+        } else if (ann.kind === "highlight") {
+          page.drawRectangle({ x: ann.x, y: ann.y, width: ann.w, height: ann.h, color: rgb(1, 0.88, 0.3), opacity: 0.4 });
+        } else if (ann.kind === "draw" && ann.points.length > 1) {
+          for (let i = 1; i < ann.points.length; i++) {
+            page.drawLine({ start: ann.points[i - 1], end: ann.points[i], thickness: 2.5, color: rgb(0.7, 0.22, 0.18) });
+          }
+        }
+      }
+    }
+
+    const bytes = await outPdf.save();
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = downloadName;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function handleExport() {
     if (!pageOrder.length) return;
     setExporting(true);
     try {
-      const { PDFDocument, StandardFonts, rgb, degrees } = await import("pdf-lib");
-      const outPdf = await PDFDocument.create();
-      const srcPdf = fileBytesRef.current ? await PDFDocument.load(fileBytesRef.current.slice(0)) : null;
-      const embeddedFonts = new Map();
-      const standardFonts = {
-        Helvetica: StandardFonts.Helvetica,
-        "Times-Roman": StandardFonts.TimesRoman,
-        Courier: StandardFonts.Courier,
-      };
-
-      async function getEmbeddedTextFont(fontFamily) {
-        const fontName = standardFonts[fontFamily] || StandardFonts.Helvetica;
-        if (!embeddedFonts.has(fontName)) {
-          embeddedFonts.set(fontName, await outPdf.embedFont(fontName));
-        }
-        return embeddedFonts.get(fontName);
-      }
-
-      for (const en of pageOrder) {
-        let page;
-        if (en.type === "original" && srcPdf) {
-          const [copied] = await outPdf.copyPages(srcPdf, [en.originalIndex]);
-          outPdf.addPage(copied);
-          page = copied;
-          if (en.rotation) {
-            const base = page.getRotation().angle;
-            page.setRotation(degrees((base + en.rotation) % 360));
-          }
-        } else {
-          page = outPdf.addPage([BLANK_W, BLANK_H]);
-        }
-
-        for (const ann of en.annotations) {
-          if (ann.kind === "text" && ann.text.trim()) {
-            const font = await getEmbeddedTextFont(ann.fontFamily);
-            page.drawText(ann.text, {
-              x: ann.x,
-              y: ann.y - ann.size,
-              size: ann.size,
-              font,
-              color: rgb(0.17, 0.29, 0.45),
-            });
-          } else if (ann.kind === "text-edit" && ann.text.trim()) {
-            const font = await getEmbeddedTextFont(ann.fontFamily);
-
-            // Cover only the selected original text span, then draw the
-            // replacement. Other PDF content remains untouched.
-            page.drawRectangle({
-              x: ann.x,
-              y: ann.y,
-              width: Math.max(ann.w, 2),
-              height: Math.max(ann.h, ann.size + 2),
-              color: rgb(1, 1, 1),
-              opacity: 1,
-            });
-
-            page.drawText(ann.text, {
-              x: ann.x,
-              y: ann.y,
-              size: ann.size,
-              font,
-              color: rgb(0, 0, 0),
-            });
-          } else if (ann.kind === "highlight") {
-            page.drawRectangle({ x: ann.x, y: ann.y, width: ann.w, height: ann.h, color: rgb(1, 0.88, 0.3), opacity: 0.4 });
-          } else if (ann.kind === "draw" && ann.points.length > 1) {
-            for (let i = 1; i < ann.points.length; i++) {
-              page.drawLine({ start: ann.points[i - 1], end: ann.points[i], thickness: 2.5, color: rgb(0.7, 0.22, 0.18) });
-            }
-          }
-        }
-      }
-
-      const bytes = await outPdf.save();
-      const blob = new Blob([bytes], { type: "application/pdf" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = fileName ? fileName.replace(/\.pdf$/i, "") + "-edited.pdf" : "edited.pdf";
-      a.click();
-      URL.revokeObjectURL(url);
+      await exportEntries(pageOrder, fileName ? fileName.replace(/\.pdf$/i, "") + "-edited.pdf" : "edited.pdf");
     } finally {
       setExporting(false);
+    }
+  }
+
+  // --- Split -----------------------------------------------------------
+  // splitPoints holds boundary indices (a value of i means "split before
+  // pageOrder[i]"). Toggling split mode clears any previous selection.
+  function toggleSplitMode() {
+    setTool("none");
+    setSplitPoints(new Set());
+    setSplitMode((s) => !s);
+  }
+
+  function toggleSplitPoint(index) {
+    setSplitPoints((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  function getSplitSegments() {
+    const bounds = [0, ...Array.from(splitPoints).sort((a, b) => a - b), pageOrder.length];
+    const segments = [];
+    for (let i = 0; i < bounds.length - 1; i++) {
+      if (bounds[i + 1] > bounds[i]) segments.push(pageOrder.slice(bounds[i], bounds[i + 1]));
+    }
+    return segments;
+  }
+
+  async function handleSplitExport() {
+    const segments = getSplitSegments();
+    if (segments.length < 2) return;
+    setExporting(true);
+    try {
+      const base = fileName ? fileName.replace(/\.pdf$/i, "") : "document";
+      for (let i = 0; i < segments.length; i++) {
+        await exportEntries(segments[i], `${base}-part${i + 1}.pdf`);
+        // Stagger downloads slightly — browsers can drop rapid-fire ones.
+        if (i < segments.length - 1) await new Promise((r) => setTimeout(r, 350));
+      }
+    } finally {
+      setExporting(false);
+      setSplitMode(false);
+      setSplitPoints(new Set());
     }
   }
 
@@ -514,7 +607,13 @@ export default function EditPdfPage() {
           <div className="flex items-center gap-3">
             <label className="font-display text-xs px-4 py-2 rounded-doc border border-line text-ink-soft cursor-pointer hover:border-ink transition-colors">
               Open file
-              <input type="file" accept="application/pdf" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
+              <input
+                type="file"
+                accept="application/pdf"
+                multiple
+                className="hidden"
+                onChange={(e) => loadFiles(e.target.files, { reset: true })}
+              />
             </label>
             <button
               onClick={handleExport}
@@ -538,17 +637,23 @@ export default function EditPdfPage() {
             onDrop={(e) => {
               e.preventDefault();
               setIsDraggingFile(false);
-              handleFiles(e.dataTransfer.files);
+              loadFiles(e.dataTransfer.files, { reset: true });
             }}
             className={`w-full max-w-md text-center border-2 border-dashed rounded-doc px-8 py-16 transition-colors ${
               isDraggingFile ? "border-pen-blue bg-paperwhite" : "border-line bg-paperwhite/60"
             }`}
           >
             <p className="font-display text-sm text-ink mb-2">Drop a PDF here</p>
-            <p className="text-ink-soft text-sm mb-6">or choose a file to start editing</p>
+            <p className="text-ink-soft text-sm mb-6">or choose file(s) to start editing — pick several to merge them</p>
             <label className="inline-block font-display text-xs font-medium px-5 py-3 rounded-doc bg-ink text-paperwhite cursor-pointer hover:shadow-[0_3px_0_#b23a2e] transition-shadow">
               Choose file
-              <input type="file" accept="application/pdf" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
+              <input
+                type="file"
+                accept="application/pdf"
+                multiple
+                className="hidden"
+                onChange={(e) => loadFiles(e.target.files, { reset: true })}
+              />
             </label>
           </div>
         </div>
@@ -556,33 +661,67 @@ export default function EditPdfPage() {
         <div className="flex-1 flex min-h-0">
           {/* Thumbnails */}
           <aside className="w-[140px] shrink-0 border-r border-line overflow-y-auto py-4 px-3 flex flex-col gap-3">
+            {splitMode && (
+              <p className="font-display text-[11px] text-ink-soft leading-snug -mt-1 mb-1">
+                Click a dashed line to split there.
+              </p>
+            )}
             {pageOrder.map((en, i) => (
-              <button
-                key={en.id}
-                onClick={() => setCurrentIndex(i)}
-                className={`relative border rounded-[2px] overflow-hidden bg-paperwhite ${
-                  i === currentIndex ? "border-pen-blue ring-1 ring-pen-blue" : "border-line"
-                }`}
-              >
-                <canvas ref={(el) => el && (thumbRefs.current[en.id] = el)} className="block w-full h-auto" />
-                <span className="absolute bottom-1 right-1 font-display text-[10px] bg-ink/80 text-paperwhite px-1 rounded-sm">{i + 1}</span>
-              </button>
+              <div key={en.id} className="flex flex-col gap-1">
+                {splitMode && i > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => toggleSplitPoint(i)}
+                    className="group h-3 flex items-center"
+                    title={splitPoints.has(i) ? "Remove split" : "Split here"}
+                  >
+                    <span
+                      className={`w-full border-t-2 border-dashed transition-colors ${
+                        splitPoints.has(i) ? "border-pen-red" : "border-line group-hover:border-pen-blue"
+                      }`}
+                    />
+                  </button>
+                )}
+                <button
+                  onClick={() => setCurrentIndex(i)}
+                  className={`relative border rounded-[2px] overflow-hidden bg-paperwhite ${
+                    i === currentIndex ? "border-pen-blue ring-1 ring-pen-blue" : "border-line"
+                  }`}
+                >
+                  <canvas ref={(el) => el && (thumbRefs.current[en.id] = el)} className="block w-full h-auto" />
+                  <span className="absolute bottom-1 right-1 font-display text-[10px] bg-ink/80 text-paperwhite px-1 rounded-sm">{i + 1}</span>
+                </button>
+              </div>
             ))}
-            <button
-              onClick={insertBlankAfterCurrent}
-              className="font-display text-xs text-ink-soft border border-dashed border-line rounded-doc py-3 hover:border-ink hover:text-ink transition-colors"
-            >
-              + Blank page
-            </button>
+            {!splitMode && (
+              <>
+                <button
+                  onClick={insertBlankAfterCurrent}
+                  className="font-display text-xs text-ink-soft border border-dashed border-line rounded-doc py-3 hover:border-ink hover:text-ink transition-colors"
+                >
+                  + Blank page
+                </button>
+                <label className="text-center font-display text-xs text-ink-soft border border-dashed border-line rounded-doc py-3 hover:border-ink hover:text-ink transition-colors cursor-pointer">
+                  + Merge PDF
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => loadFiles(e.target.files, { reset: false })}
+                  />
+                </label>
+              </>
+            )}
           </aside>
 
           {/* Main editor */}
           <div className="flex-1 flex flex-col min-w-0">
             {/* Toolbar */}
             <div className="border-b border-line px-6 py-3 flex flex-wrap items-center gap-2">
-              <button className={toolBtn("none", "Select")} onClick={() => setTool("none")}>Select</button>
-              <button className={toolBtn("text", "Text")} onClick={() => setTool("text")}>+ Text</button>
-              <button className={toolBtn("edit-text", "Edit text")} onClick={() => setTool("edit-text")}>Edit text</button>
+              <button className={toolBtn("none", "Select")} onClick={() => setTool("none")} disabled={splitMode}>Select</button>
+              <button className={toolBtn("text", "Text")} onClick={() => setTool("text")} disabled={splitMode}>+ Text</button>
+              <button className={toolBtn("edit-text", "Edit text")} onClick={() => setTool("edit-text")} disabled={splitMode}>Edit text</button>
 
               <select
                 value={selectedTextAnnotation?.fontFamily || "Helvetica"}
@@ -612,41 +751,76 @@ export default function EditPdfPage() {
                 ))}
               </select>
 
-              <button className={toolBtn("highlight", "Highlight")} onClick={() => setTool("highlight")}>Highlight</button>
-              <button className={toolBtn("draw", "Draw")} onClick={() => setTool("draw")}>Draw</button>
+              <button className={toolBtn("highlight", "Highlight")} onClick={() => setTool("highlight")} disabled={splitMode}>Highlight</button>
+              <button className={toolBtn("draw", "Draw")} onClick={() => setTool("draw")} disabled={splitMode}>Draw</button>
 
               <span className="w-px h-5 bg-line mx-1" />
 
               <button
                 onClick={rotatePage}
-                disabled={entry?.type === "blank"}
+                disabled={entry?.type === "blank" || splitMode}
                 className="font-display text-xs px-3 py-2 rounded-doc border border-line text-ink-soft hover:border-ink disabled:opacity-40 disabled:pointer-events-none transition-colors"
               >
                 Rotate ⟳
               </button>
-              <button onClick={() => movePage(-1)} className="font-display text-xs px-3 py-2 rounded-doc border border-line text-ink-soft hover:border-ink transition-colors">
+              <button onClick={() => movePage(-1)} disabled={splitMode} className="font-display text-xs px-3 py-2 rounded-doc border border-line text-ink-soft hover:border-ink disabled:opacity-40 disabled:pointer-events-none transition-colors">
                 ← Move
               </button>
-              <button onClick={() => movePage(1)} className="font-display text-xs px-3 py-2 rounded-doc border border-line text-ink-soft hover:border-ink transition-colors">
+              <button onClick={() => movePage(1)} disabled={splitMode} className="font-display text-xs px-3 py-2 rounded-doc border border-line text-ink-soft hover:border-ink disabled:opacity-40 disabled:pointer-events-none transition-colors">
                 Move →
               </button>
-              <button onClick={clearAnnotations} className="font-display text-xs px-3 py-2 rounded-doc border border-line text-ink-soft hover:border-ink transition-colors">
+              <button onClick={clearAnnotations} disabled={splitMode} className="font-display text-xs px-3 py-2 rounded-doc border border-line text-ink-soft hover:border-ink disabled:opacity-40 disabled:pointer-events-none transition-colors">
                 Clear marks
               </button>
               <button
                 onClick={removeSelectedAnnotation}
-                disabled={!selectedAnnotationId}
+                disabled={!selectedAnnotationId || splitMode}
                 className="font-display text-xs px-3 py-2 rounded-doc border border-pen-red text-pen-red hover:bg-pen-red hover:text-paperwhite disabled:opacity-40 disabled:pointer-events-none transition-colors"
               >
                 Delete selected
               </button>
               <button
                 onClick={deleteCurrentPage}
-                disabled={pageOrder.length <= 1}
+                disabled={pageOrder.length <= 1 || splitMode}
                 className="font-display text-xs px-3 py-2 rounded-doc border border-pen-red text-pen-red hover:bg-pen-red hover:text-paperwhite disabled:opacity-40 disabled:pointer-events-none transition-colors"
               >
                 Delete page
               </button>
+
+              <span className="w-px h-5 bg-line mx-1" />
+
+              <button
+                onClick={toggleSplitMode}
+                disabled={pageOrder.length < 2}
+                className={`font-display text-xs px-3 py-2 rounded-doc border transition-colors disabled:opacity-40 disabled:pointer-events-none ${
+                  splitMode ? "bg-ink text-paperwhite border-ink" : "bg-paperwhite text-ink-soft border-line hover:border-ink"
+                }`}
+              >
+                Split
+              </button>
+              {splitMode && (
+                <>
+                  <span className="font-display text-xs text-ink-soft">
+                    {splitPoints.size + 1} part{splitPoints.size ? "s" : ""}
+                  </span>
+                  <button
+                    onClick={handleSplitExport}
+                    disabled={splitPoints.size === 0 || exporting}
+                    className="font-display text-xs font-medium px-3 py-2 rounded-doc bg-ink text-paperwhite border border-ink disabled:opacity-50 disabled:pointer-events-none hover:shadow-[0_3px_0_#b23a2e] transition-shadow"
+                  >
+                    {exporting ? "Exporting…" : "Download parts"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSplitMode(false);
+                      setSplitPoints(new Set());
+                    }}
+                    className="font-display text-xs px-3 py-2 rounded-doc border border-line text-ink-soft hover:border-ink transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
 
               <span className="ml-auto font-display text-xs text-ink-soft">
                 Page {currentIndex + 1} of {pageOrder.length}
