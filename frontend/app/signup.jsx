@@ -8,12 +8,27 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  function handleSubmit(e) {
-    e.preventDefault();
-    setSubmitting(true);
-    // Wire this up to your auth provider.
-    setTimeout(() => setSubmitting(false), 900);
+  async function handleSubmit(e) {
+  e.preventDefault();
+  setSubmitting(true);
+  try {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: name, password }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "Signup failed");
+    }
+    const data = await res.json();
+    // handle success, e.g. redirect to login
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setSubmitting(false);
   }
+}
 
   return (
     <main className="min-h-screen bg-paper text-ink flex flex-col">

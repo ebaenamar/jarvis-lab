@@ -1,4 +1,45 @@
+"use client";
+
+import { useState } from "react";
+
 export default function HomePage() {
+  const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  async function uploadPdf(selectedFile) {
+    setUploading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/pdf/upload`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) throw new Error("Upload failed");
+
+      const savedPath = await res.text();
+      setResult(savedPath);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function handleFileChange(e) {
+    const selected = e.target.files[0];
+    if (selected) {
+      setFile(selected);
+      uploadPdf(selected);
+    }
+  }
+
   return (
     <>
       <header className="border-b border-line py-7">
@@ -29,13 +70,13 @@ export default function HomePage() {
             </li>
           </ul>
           <div className="flex items-center gap-3">
-            <a
+            
               className="font-display text-[13px] text-ink-soft no-underline transition-colors duration-150 hover:text-pen-blue"
               href="#"
             >
               Log in
             </a>
-            <a
+            
               className="font-display text-[13px] border border-ink px-4 py-2 rounded-doc no-underline text-ink whitespace-nowrap transition-colors duration-150 hover:bg-ink hover:text-paperwhite"
               href="#"
             >
@@ -69,13 +110,13 @@ export default function HomePage() {
                 built by people who actually read PDFs for a living.
               </p>
               <div className="flex items-center gap-5 mb-10">
-                <a
+                
                   className="font-display font-medium text-sm bg-ink text-paperwhite border border-ink px-[22px] py-[13px] rounded-doc no-underline inline-flex items-center gap-2 transition-transform duration-150 hover:-translate-y-px hover:shadow-[0_4px_0_#b23a2e]"
                   href="#"
                 >
                   Download for free →
                 </a>
-                <a
+                
                   className="font-display text-sm text-ink no-underline border-b border-line pb-0.5 transition-colors duration-150 hover:border-ink"
                   href="#source"
                 >
@@ -145,6 +186,51 @@ export default function HomePage() {
                   <div className="h-2 rounded-[2px] bg-paper-dim w-[80%]"></div>
                 </div>
               </div>
+            </div>
+          </div>
+        </section>
+
+        {/* UPLOAD — connects to the Spring Boot backend */}
+        <section className="border-t border-line py-16">
+          <div className="max-w-[1180px] mx-auto px-8">
+            <div className="border border-line rounded-doc bg-paper px-8 py-10 max-w-[560px] mx-auto text-center">
+              <h2 className="font-display text-lg mb-2 tracking-[-0.01em]">
+                Try it — upload a PDF
+              </h2>
+              <p className="text-[14.5px] text-ink-soft mb-6">
+                Sent straight to the local backend. Nothing leaves your machine.
+              </p>
+
+              <label
+                className="font-display font-medium text-sm bg-ink text-paperwhite border border-ink px-[22px] py-[13px] rounded-doc inline-flex items-center gap-2 cursor-pointer transition-transform duration-150 hover:-translate-y-px hover:shadow-[0_4px_0_#b23a2e]"
+              >
+                {uploading ? "Uploading…" : "Choose PDF"}
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  className="hidden"
+                  onChange={handleFileChange}
+                  disabled={uploading}
+                />
+              </label>
+
+              {file && (
+                <p className="mt-4 text-[13px] text-ink-soft font-display">
+                  {file.name}
+                </p>
+              )}
+
+              {result && (
+                <p className="mt-2 text-[13px] text-[#6b9955] font-display">
+                  ✓ Uploaded — saved at {result}
+                </p>
+              )}
+
+              {error && (
+                <p className="mt-2 text-[13px] text-pen-red font-display">
+                  ✗ {error}
+                </p>
+              )}
             </div>
           </div>
         </section>
