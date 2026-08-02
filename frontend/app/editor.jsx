@@ -50,6 +50,7 @@ export default function EditPdfPage() {
   const [editingTextId, setEditingTextId] = useState(null);
   const [dragRect, setDragRect] = useState(null);
   const [drawPoints, setDrawPoints] = useState(null);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
 
@@ -188,12 +189,31 @@ export default function EditPdfPage() {
   }
 
   function clearAnnotations() {
+    setSelectedAnnotationId(null);
     updateCurrentEntry((en) => ({ ...en, annotations: [] }));
   }
 
   function removeAnnotation(id) {
+    setSelectedAnnotationId((curr) => (curr === id ? null : curr));
     updateCurrentEntry((en) => ({ ...en, annotations: en.annotations.filter((a) => a.id !== id) }));
   }
+
+  function removeSelectedAnnotation() {
+    if (!selectedAnnotationId) return;
+    removeAnnotation(selectedAnnotationId);
+  }
+
+  useEffect(() => {
+    function onKeyDown(event) {
+      if ((event.key === "Delete" || event.key === "Backspace") && selectedAnnotationId) {
+        event.preventDefault();
+        removeSelectedAnnotation();
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedAnnotationId]);
 
   // --- Overlay pointer handling -----------------------------------------
   function getDisplayPoint(e) {
@@ -205,16 +225,22 @@ export default function EditPdfPage() {
   }
 
   function handleOverlayClick(e) {
-    if (tool !== "text" || !entry) return;
-    const { x, y } = getDisplayPoint(e);
-    const canonical = toCanonical(entry, x, y);
-    if (!canonical) return;
-    const id = nextId();
-    updateCurrentEntry((en) => ({
-      ...en,
-      annotations: [...en.annotations, { id, kind: "text", x: canonical[0], y: canonical[1], text: "", size: 16 }],
-    }));
-    setEditingTextId(id);
+    if (!entry) return;
+    if (tool === "text") {
+      const { x, y } = getDisplayPoint(e);
+      const canonical = toCanonical(entry, x, y);
+      if (!canonical) return;
+      const id = nextId();
+      updateCurrentEntry((en) => ({
+        ...en,
+        annotations: [...en.annotations, { id, kind: "text", x: canonical[0], y: canonical[1], text: "", size: 16 }],
+      }));
+      setSelectedAnnotationId(id);
+      setEditingTextId(id);
+      return;
+    }
+
+    setSelectedAnnotationId(null);
   }
 
   function handlePointerDown(e) {
@@ -431,6 +457,13 @@ export default function EditPdfPage() {
                 Clear marks
               </button>
               <button
+                onClick={removeSelectedAnnotation}
+                disabled={!selectedAnnotationId}
+                className="font-display text-xs px-3 py-2 rounded-doc border border-pen-red text-pen-red hover:bg-pen-red hover:text-paperwhite disabled:opacity-40 disabled:pointer-events-none transition-colors"
+              >
+                Delete selected
+              </button>
+              <button
                 onClick={deleteCurrentPage}
                 disabled={pageOrder.length <= 1}
                 className="font-display text-xs px-3 py-2 rounded-doc border border-pen-red text-pen-red hover:bg-pen-red hover:text-paperwhite disabled:opacity-40 disabled:pointer-events-none transition-colors"
@@ -471,14 +504,23 @@ export default function EditPdfPage() {
                         const top = Math.min(d1[1], d2[1]);
                         const width = Math.abs(d2[0] - d1[0]);
                         const height = Math.abs(d2[1] - d1[1]);
+                        const selected = selectedAnnotationId === ann.id;
                         return (
-                          <div key={ann.id} className="absolute group" style={{ left, top, width, height, background: "rgba(255,224,64,0.45)" }}>
+                          <div
+                            key={ann.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedAnnotationId(ann.id);
+                            }}
+                            className={`absolute group cursor-pointer ${selected ? "ring-2 ring-pen-red ring-inset" : ""}`}
+                            style={{ left, top, width, height, background: "rgba(255,224,64,0.45)" }}
+                          >
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 removeAnnotation(ann.id);
                               }}
-                              className="absolute -top-2 -right-2 hidden group-hover:flex w-4 h-4 items-center justify-center rounded-full bg-pen-red text-paperwhite text-[10px] leading-none"
+                              className={`absolute -top-2 -right-2 flex w-4 h-4 items-center justify-center rounded-full bg-pen-red text-paperwhite text-[10px] leading-none ${selected ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
                             >
                               ×
                             </button>
@@ -487,7 +529,7 @@ export default function EditPdfPage() {
                       })}
 
                     {/* Draw strokes */}
-                    <svg className="absolute inset-0 pointer-events-none" width={canvasSize.w} height={canvasSize.h}>
+                    <svg className="absolute inset-0" width={canvasSize.w} height={canvasSize.h}>
                       {entry.annotations
                         .filter((a) => a.kind === "draw")
                         .map((ann) => {
@@ -498,7 +540,31 @@ export default function EditPdfPage() {
                             })
                             .filter(Boolean)
                             .join(" ");
-                          return <polyline key={ann.id} points={pts} fill="none" stroke="#b23a2e" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />;
+                          const selected = selectedAnnotationId === ann.id;
+                          return (
+                            <g key={ann.id} onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedAnnotationId(ann.id);
+                            }}>
+                              <polyline
+                                points={pts}
+                                fill="none"
+                                stroke={selected ? "#2c4a73" : "#b23a2e"}
+                                strokeWidth={selected ? 4 : 2.5}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                style={{ cursor: "pointer" }}
+                              />
+                              {selected && (
+                                <g onClick={(e) => { e.stopPropagation(); removeAnnotation(ann.id); }}>
+                                  <circle cx={0} cy={0} r={7} fill="#b23a2e" opacity={0.95} />
+                                  <text x={0} y={3} textAnchor="middle" fontSize="9" fill="#fff" fontWeight="700">
+                                    ×
+                                  </text>
+                                </g>
+                              )}
+                            </g>
+                          );
                         })}
                       {drawPoints && drawPoints.length > 1 && (
                         <polyline
@@ -528,8 +594,18 @@ export default function EditPdfPage() {
                         const d = toDisplay(entry, ann.x, ann.y);
                         if (!d) return null;
                         const isEditing = editingTextId === ann.id;
+                        const selected = selectedAnnotationId === ann.id;
                         return (
-                          <div key={ann.id} className="absolute group" style={{ left: d[0], top: d[1] }}>
+                          <div
+                            key={ann.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedAnnotationId(ann.id);
+                              setEditingTextId(ann.id);
+                            }}
+                            className="absolute group"
+                            style={{ left: d[0], top: d[1] }}
+                          >
                             {isEditing ? (
                               <textarea
                                 autoFocus
@@ -549,11 +625,7 @@ export default function EditPdfPage() {
                               />
                             ) : (
                               <div
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setEditingTextId(ann.id);
-                                }}
-                                className="font-annotation text-pen-blue cursor-text whitespace-pre-wrap"
+                                className={`font-annotation text-pen-blue cursor-text whitespace-pre-wrap ${selected ? "ring-1 ring-pen-red px-0.5" : ""}`}
                                 style={{ fontSize: ann.size }}
                               >
                                 {ann.text}
@@ -562,7 +634,7 @@ export default function EditPdfPage() {
                                     e.stopPropagation();
                                     removeAnnotation(ann.id);
                                   }}
-                                  className="ml-1 hidden group-hover:inline-flex w-4 h-4 items-center justify-center rounded-full bg-pen-red text-paperwhite text-[10px] leading-none align-top"
+                                  className={`ml-1 inline-flex w-4 h-4 items-center justify-center rounded-full bg-pen-red text-paperwhite text-[10px] leading-none align-top ${selected ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
                                 >
                                   ×
                                 </button>
