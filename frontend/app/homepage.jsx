@@ -73,6 +73,12 @@ export default function HomePage() {
           </ul>
           <div className="flex items-center gap-3">
             <Link
+              className="font-display text-[13px] border border-ink px-4 py-2 rounded-doc no-underline text-ink whitespace-nowrap transition-colors duration-150 hover:bg-ink hover:text-paperwhite"
+              href="/editor"
+            >
+              Editor
+            </Link>
+            <Link
               className="font-display text-[13px] text-ink-soft no-underline transition-colors duration-150 hover:text-pen-blue"
               href="/login"
             >
