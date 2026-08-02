@@ -8,6 +8,18 @@ const RENDER_SCALE = 1.5;
 const BLANK_W = 612; // US Letter, PDF points
 const BLANK_H = 792;
 
+const TEXT_FONT_OPTIONS = [
+  { value: "Helvetica", label: "Helvetica", css: "Helvetica, Arial, sans-serif" },
+  { value: "Times-Roman", label: "Times Roman", css: '"Times New Roman", Times, serif' },
+  { value: "Courier", label: "Courier", css: '"Courier New", Courier, monospace' },
+];
+
+const TEXT_SIZE_OPTIONS = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 60, 72];
+
+function getTextFontCss(fontFamily) {
+  return TEXT_FONT_OPTIONS.find((font) => font.value === fontFamily)?.css || TEXT_FONT_OPTIONS[0].css;
+}
+
 let idCounter = 0;
 const nextId = () => ++idCounter;
 
@@ -20,8 +32,16 @@ async function getPdfjs() {
   return lib;
 }
 
-function makeEntry(type, sourceIndex = null, originalIndex = null) {
-  return { id: nextId(), type, sourceIndex, originalIndex, rotation: 0, viewport: null, annotations: [] };
+function makeEntry(type, originalIndex = null) {
+  return {
+    id: nextId(),
+    type,
+    originalIndex,
+    rotation: 0,
+    viewport: null,
+    annotations: [],
+    textItems: [],
+  };
 }
 
 // Canonical annotation coordinates are always PDF points in the page's
@@ -41,7 +61,7 @@ function toDisplay(entry, x, y) {
 }
 
 export default function EditPdfPage() {
-  const [pdfDocs, setPdfDocs] = useState([]); // one pdfjs document per merged source file
+  const [pdfDoc, setPdfDoc] = useState(null);
   const [pageOrder, setPageOrder] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [tool, setTool] = useState("none"); // none | text | highlight | draw
@@ -53,54 +73,31 @@ export default function EditPdfPage() {
   const [selectedAnnotationId, setSelectedAnnotationId] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
-  const [splitMarks, setSplitMarks] = useState(new Set()); // entry ids marked "split after this page"
 
-  const sourcesRef = useRef([]); // one Uint8Array per merged source file, parallel to pdfDocs
+  const fileBytesRef = useRef(null);
   const canvasRef = useRef(null);
-  const textLayerRef = useRef(null);
   const overlayRef = useRef(null);
   const thumbRefs = useRef({});
   const dragStartRef = useRef(null);
   const isPointerDown = useRef(false);
 
   const entry = pageOrder[currentIndex] || null;
+  const selectedTextAnnotation =
+    entry?.annotations.find((a) => a.id === selectedAnnotationId && a.kind === "text") || null;
 
-  // --- Load a file (replaces everything) --------------------------------
+  // --- Load a file -----------------------------------------------------
   async function handleFiles(fileList) {
     const file = fileList?.[0];
     if (!file || file.type !== "application/pdf") return;
     const buf = await file.arrayBuffer();
-    const bytes = new Uint8Array(buf);
+    fileBytesRef.current = new Uint8Array(buf);
     setFileName(file.name);
 
     const pdfjsLib = await getPdfjs();
-    const doc = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
-
-    sourcesRef.current = [bytes];
-    setPdfDocs([doc]);
-    setPageOrder(Array.from({ length: doc.numPages }, (_, i) => makeEntry("original", 0, i)));
+    const doc = await pdfjsLib.getDocument({ data: fileBytesRef.current.slice(0) }).promise;
+    setPdfDoc(doc);
+    setPageOrder(Array.from({ length: doc.numPages }, (_, i) => makeEntry("original", i)));
     setCurrentIndex(0);
-    setSplitMarks(new Set());
-  }
-
-  // --- Merge additional file(s) onto the end of the current document ----
-  async function handleMergeFiles(fileList) {
-    const files = Array.from(fileList || []).filter((f) => f.type === "application/pdf");
-    if (!files.length) return;
-    const pdfjsLib = await getPdfjs();
-
-    for (const file of files) {
-      const buf = await file.arrayBuffer();
-      const bytes = new Uint8Array(buf);
-      const doc = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
-
-      const sourceIndex = sourcesRef.current.length;
-      sourcesRef.current = [...sourcesRef.current, bytes];
-      setPdfDocs((prev) => [...prev, doc]);
-
-      const newEntries = Array.from({ length: doc.numPages }, (_, i) => makeEntry("original", sourceIndex, i));
-      setPageOrder((prev) => [...prev, ...newEntries]);
-    }
   }
 
   // --- Render the current page onto the main canvas ---------------------
@@ -123,13 +120,11 @@ export default function EditPdfPage() {
         ctx.fillStyle = "#fbfaf6";
         ctx.fillRect(0, 0, w, h);
         setCanvasSize({ w, h });
-        if (textLayerRef.current) textLayerRef.current.replaceChildren();
         return;
       }
 
-      const doc = pdfDocs[entry.sourceIndex];
-      if (!doc) return;
-      const page = await doc.getPage(entry.originalIndex + 1);
+      if (!pdfDoc) return;
+      const page = await pdfDoc.getPage(entry.originalIndex + 1);
       const viewport = page.getViewport({ scale: RENDER_SCALE, rotation: entry.rotation });
       canvas.width = viewport.width;
       canvas.height = viewport.height;
@@ -138,32 +133,39 @@ export default function EditPdfPage() {
       const ctx = canvas.getContext("2d");
       await page.render({ canvasContext: ctx, viewport }).promise;
       if (cancelled) return;
-      setCanvasSize({ w: viewport.width, h: viewport.height });
-      setPageOrder((prev) => prev.map((en, i) => (i === currentIndex ? { ...en, viewport } : en)));
 
-      // Selectable text layer, positioned exactly over the rendered canvas
-      const textLayerDiv = textLayerRef.current;
-      if (textLayerDiv) {
-        textLayerDiv.replaceChildren();
-        textLayerDiv.style.width = `${viewport.width}px`;
-        textLayerDiv.style.height = `${viewport.height}px`;
-        const pdfjsLib = await getPdfjs();
-        const textContent = await page.getTextContent();
-        if (cancelled) return;
-        const textLayer = new pdfjsLib.TextLayer({
-          textContentSource: textContent,
-          container: textLayerDiv,
-          viewport,
+      const pdfjsLib = await getPdfjs();
+      const content = await page.getTextContent();
+      const textItems = content.items
+        .filter((item) => item.str && item.str.trim())
+        .map((item, index) => {
+          const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+          const fontHeight = Math.max(8, Math.hypot(tx[2], tx[3]));
+
+          return {
+            id: `${entry.id}-text-${index}`,
+            text: item.str,
+            x: tx[4],
+            top: tx[5] - fontHeight,
+            width: Math.max(1, Math.abs(item.width * RENDER_SCALE)),
+            height: fontHeight,
+            size: fontHeight / RENDER_SCALE,
+          };
         });
-        await textLayer.render();
-      }
+
+      setCanvasSize({ w: viewport.width, h: viewport.height });
+      setPageOrder((prev) =>
+        prev.map((en, i) =>
+          i === currentIndex ? { ...en, viewport, textItems } : en
+        )
+      );
     })();
 
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfDocs, currentIndex, entry?.id, entry?.rotation, entry?.type]);
+  }, [pdfDoc, currentIndex, entry?.id, entry?.rotation, entry?.type]);
 
   // --- Render thumbnails --------------------------------------------------
   const structureKey = pageOrder.map((e) => `${e.id}:${e.type}:${e.rotation}`).join("|");
@@ -183,9 +185,8 @@ export default function EditPdfPage() {
         return;
       }
 
-      const doc = pdfDocs[en.sourceIndex];
-      if (!doc) return;
-      const page = await doc.getPage(en.originalIndex + 1);
+      if (!pdfDoc) return;
+      const page = await pdfDoc.getPage(en.originalIndex + 1);
       const base = page.getViewport({ scale: 1, rotation: en.rotation });
       const thumbScale = 84 / base.width;
       const viewport = page.getViewport({ scale: thumbScale, rotation: en.rotation });
@@ -195,7 +196,7 @@ export default function EditPdfPage() {
       await page.render({ canvasContext: ctx, viewport }).promise;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfDocs, structureKey]);
+  }, [pdfDoc, structureKey]);
 
   // --- Page operations -----------------------------------------------------
   function updateCurrentEntry(fn) {
@@ -269,6 +270,66 @@ export default function EditPdfPage() {
     return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
   }
 
+  function updateSelectedTextAnnotation(changes) {
+    if (!selectedTextAnnotation) return;
+    updateCurrentEntry((en) => ({
+      ...en,
+      annotations: en.annotations.map((a) =>
+        a.id === selectedTextAnnotation.id ? { ...a, ...changes } : a
+      ),
+    }));
+  }
+
+  function handleSelectedTextFontFamilyChange(e) {
+    updateSelectedTextAnnotation({ fontFamily: e.target.value });
+  }
+
+  function handleSelectedTextFontSizeChange(e) {
+    const size = Number(e.target.value);
+    if (Number.isFinite(size) && size > 0) {
+      updateSelectedTextAnnotation({ size });
+    }
+  }
+
+  function editExistingText(item) {
+    if (!entry || entry.type === "blank") return;
+
+    const existing = entry.annotations.find(
+      (ann) => ann.kind === "text-edit" && ann.sourceTextId === item.id
+    );
+
+    if (existing) {
+      setSelectedAnnotationId(existing.id);
+      setEditingTextId(existing.id);
+      return;
+    }
+
+    const c1 = toCanonical(entry, item.x, item.top);
+    const c2 = toCanonical(entry, item.x + item.width, item.top + item.height);
+    if (!c1 || !c2) return;
+
+    const ann = {
+      id: nextId(),
+      kind: "text-edit",
+      sourceTextId: item.id,
+      originalText: item.text,
+      text: item.text,
+      x: Math.min(c1[0], c2[0]),
+      y: Math.min(c1[1], c2[1]),
+      w: Math.abs(c2[0] - c1[0]),
+      h: Math.abs(c2[1] - c1[1]),
+      size: item.size,
+      fontFamily: "Helvetica",
+    };
+
+    updateCurrentEntry((en) => ({
+      ...en,
+      annotations: [...en.annotations, ann],
+    }));
+    setSelectedAnnotationId(ann.id);
+    setEditingTextId(ann.id);
+  }
+
   function handleOverlayClick(e) {
     if (!entry) return;
     if (tool === "text") {
@@ -278,7 +339,7 @@ export default function EditPdfPage() {
       const id = nextId();
       updateCurrentEntry((en) => ({
         ...en,
-        annotations: [...en.annotations, { id, kind: "text", x: canonical[0], y: canonical[1], text: "", size: 16 }],
+        annotations: [...en.annotations, { id, kind: "text", x: canonical[0], y: canonical[1], text: "", size: 16, fontFamily: "Helvetica" }],
       }));
       setSelectedAnnotationId(id);
       setEditingTextId(id);
@@ -347,106 +408,91 @@ export default function EditPdfPage() {
   }
 
   // --- Export --------------------------------------------------------------
-  function downloadBytes(bytes, filename) {
-    const blob = new Blob([bytes], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  // Builds one output PDF (as bytes) from a list of page entries, pulling
-  // original pages from whichever source file each entry points at —
-  // this is what makes merged, multi-file documents export correctly.
-  async function buildPdfBytes(entries, srcDocs, lib) {
-    const { PDFDocument, StandardFonts, rgb, degrees } = lib;
-    const outPdf = await PDFDocument.create();
-    const font = await outPdf.embedFont(StandardFonts.Helvetica);
-
-    for (const en of entries) {
-      let page;
-      if (en.type === "original" && srcDocs[en.sourceIndex]) {
-        const [copied] = await outPdf.copyPages(srcDocs[en.sourceIndex], [en.originalIndex]);
-        outPdf.addPage(copied);
-        page = copied;
-        if (en.rotation) {
-          const base = page.getRotation().angle;
-          page.setRotation(degrees((base + en.rotation) % 360));
-        }
-      } else {
-        page = outPdf.addPage([BLANK_W, BLANK_H]);
-      }
-
-      for (const ann of en.annotations) {
-        if (ann.kind === "text" && ann.text.trim()) {
-          page.drawText(ann.text, { x: ann.x, y: ann.y - ann.size, size: ann.size, font, color: rgb(0.17, 0.29, 0.45) });
-        } else if (ann.kind === "highlight") {
-          page.drawRectangle({ x: ann.x, y: ann.y, width: ann.w, height: ann.h, color: rgb(1, 0.88, 0.3), opacity: 0.4 });
-        } else if (ann.kind === "draw" && ann.points.length > 1) {
-          for (let i = 1; i < ann.points.length; i++) {
-            page.drawLine({ start: ann.points[i - 1], end: ann.points[i], thickness: 2.5, color: rgb(0.7, 0.22, 0.18) });
-          }
-        }
-      }
-    }
-
-    return outPdf.save();
-  }
-
-  async function loadSourceDocs(PDFDocument) {
-    return Promise.all(sourcesRef.current.map((bytes) => (bytes ? PDFDocument.load(bytes.slice(0)) : null)));
-  }
-
   async function handleExport() {
     if (!pageOrder.length) return;
     setExporting(true);
     try {
-      const lib = await import("pdf-lib");
-      const srcDocs = await loadSourceDocs(lib.PDFDocument);
-      const bytes = await buildPdfBytes(pageOrder, srcDocs, lib);
-      downloadBytes(bytes, fileName ? fileName.replace(/\.pdf$/i, "") + "-edited.pdf" : "edited.pdf");
-    } finally {
-      setExporting(false);
-    }
-  }
+      const { PDFDocument, StandardFonts, rgb, degrees } = await import("pdf-lib");
+      const outPdf = await PDFDocument.create();
+      const srcPdf = fileBytesRef.current ? await PDFDocument.load(fileBytesRef.current.slice(0)) : null;
+      const embeddedFonts = new Map();
+      const standardFonts = {
+        Helvetica: StandardFonts.Helvetica,
+        "Times-Roman": StandardFonts.TimesRoman,
+        Courier: StandardFonts.Courier,
+      };
 
-  // --- Split -----------------------------------------------------------
-  function toggleSplitAfter(id) {
-    setSplitMarks((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
+      async function getEmbeddedTextFont(fontFamily) {
+        const fontName = standardFonts[fontFamily] || StandardFonts.Helvetica;
+        if (!embeddedFonts.has(fontName)) {
+          embeddedFonts.set(fontName, await outPdf.embedFont(fontName));
+        }
+        return embeddedFonts.get(fontName);
+      }
 
-  async function handleExportSplit() {
-    if (pageOrder.length < 2 || splitMarks.size === 0) return;
-    setExporting(true);
-    try {
-      const lib = await import("pdf-lib");
-      const srcDocs = await loadSourceDocs(lib.PDFDocument);
-
-      const segments = [];
-      let current = [];
       for (const en of pageOrder) {
-        current.push(en);
-        if (splitMarks.has(en.id)) {
-          segments.push(current);
-          current = [];
+        let page;
+        if (en.type === "original" && srcPdf) {
+          const [copied] = await outPdf.copyPages(srcPdf, [en.originalIndex]);
+          outPdf.addPage(copied);
+          page = copied;
+          if (en.rotation) {
+            const base = page.getRotation().angle;
+            page.setRotation(degrees((base + en.rotation) % 360));
+          }
+        } else {
+          page = outPdf.addPage([BLANK_W, BLANK_H]);
+        }
+
+        for (const ann of en.annotations) {
+          if (ann.kind === "text" && ann.text.trim()) {
+            const font = await getEmbeddedTextFont(ann.fontFamily);
+            page.drawText(ann.text, {
+              x: ann.x,
+              y: ann.y - ann.size,
+              size: ann.size,
+              font,
+              color: rgb(0.17, 0.29, 0.45),
+            });
+          } else if (ann.kind === "text-edit" && ann.text.trim()) {
+            const font = await getEmbeddedTextFont(ann.fontFamily);
+
+            // Cover only the selected original text span, then draw the
+            // replacement. Other PDF content remains untouched.
+            page.drawRectangle({
+              x: ann.x,
+              y: ann.y,
+              width: Math.max(ann.w, 2),
+              height: Math.max(ann.h, ann.size + 2),
+              color: rgb(1, 1, 1),
+              opacity: 1,
+            });
+
+            page.drawText(ann.text, {
+              x: ann.x,
+              y: ann.y,
+              size: ann.size,
+              font,
+              color: rgb(0, 0, 0),
+            });
+          } else if (ann.kind === "highlight") {
+            page.drawRectangle({ x: ann.x, y: ann.y, width: ann.w, height: ann.h, color: rgb(1, 0.88, 0.3), opacity: 0.4 });
+          } else if (ann.kind === "draw" && ann.points.length > 1) {
+            for (let i = 1; i < ann.points.length; i++) {
+              page.drawLine({ start: ann.points[i - 1], end: ann.points[i], thickness: 2.5, color: rgb(0.7, 0.22, 0.18) });
+            }
+          }
         }
       }
-      if (current.length) segments.push(current);
 
-      const base = fileName ? fileName.replace(/\.pdf$/i, "") : "document";
-      for (let i = 0; i < segments.length; i++) {
-        const bytes = await buildPdfBytes(segments[i], srcDocs, lib);
-        downloadBytes(bytes, `${base}-part${i + 1}.pdf`);
-        // Small gap so the browser doesn't treat rapid-fire downloads as a popup flood
-        if (i < segments.length - 1) await new Promise((r) => setTimeout(r, 400));
-      }
+      const bytes = await outPdf.save();
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName ? fileName.replace(/\.pdf$/i, "") + "-edited.pdf" : "edited.pdf";
+      a.click();
+      URL.revokeObjectURL(url);
     } finally {
       setExporting(false);
     }
@@ -468,28 +514,8 @@ export default function EditPdfPage() {
           <div className="flex items-center gap-3">
             <label className="font-display text-xs px-4 py-2 rounded-doc border border-line text-ink-soft cursor-pointer hover:border-ink transition-colors">
               Open file
-              <input type="file" accept="application/pdf" className="hidden" onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
+              <input type="file" accept="application/pdf" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
             </label>
-            {pageOrder.length > 0 && (
-              <label className="font-display text-xs px-4 py-2 rounded-doc border border-line text-ink-soft cursor-pointer hover:border-ink transition-colors">
-                + Merge PDF
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => { handleMergeFiles(e.target.files); e.target.value = ""; }}
-                />
-              </label>
-            )}
-            <button
-              onClick={handleExportSplit}
-              disabled={!pageOrder.length || exporting || splitMarks.size === 0}
-              title={splitMarks.size === 0 ? "Mark a split point on the thumbnail rail first" : "Download each split segment as its own file"}
-              className="font-display text-xs px-4 py-2 rounded-doc border border-line text-ink-soft disabled:opacity-40 disabled:pointer-events-none hover:border-ink transition-colors"
-            >
-              {exporting ? "Exporting…" : "Export split"}
-            </button>
             <button
               onClick={handleExport}
               disabled={!pageOrder.length || exporting}
@@ -531,30 +557,16 @@ export default function EditPdfPage() {
           {/* Thumbnails */}
           <aside className="w-[140px] shrink-0 border-r border-line overflow-y-auto py-4 px-3 flex flex-col gap-3">
             {pageOrder.map((en, i) => (
-              <div key={en.id} className="flex flex-col gap-1">
-                <button
-                  onClick={() => setCurrentIndex(i)}
-                  className={`relative border rounded-[2px] overflow-hidden bg-paperwhite ${
-                    i === currentIndex ? "border-pen-blue ring-1 ring-pen-blue" : "border-line"
-                  }`}
-                >
-                  <canvas ref={(el) => el && (thumbRefs.current[en.id] = el)} className="block w-full h-auto" />
-                  <span className="absolute bottom-1 right-1 font-display text-[10px] bg-ink/80 text-paperwhite px-1 rounded-sm">{i + 1}</span>
-                </button>
-                {i < pageOrder.length - 1 && (
-                  <button
-                    onClick={() => toggleSplitAfter(en.id)}
-                    title={splitMarks.has(en.id) ? "Remove split point" : "Split here"}
-                    className={`group flex items-center justify-center gap-1 font-display text-[10px] py-1 rounded-[2px] border border-dashed transition-colors ${
-                      splitMarks.has(en.id)
-                        ? "border-pen-red text-pen-red bg-pen-red/10"
-                        : "border-line text-ink-soft/40 hover:text-ink-soft hover:border-ink"
-                    }`}
-                  >
-                    ✂ {splitMarks.has(en.id) && "split"}
-                  </button>
-                )}
-              </div>
+              <button
+                key={en.id}
+                onClick={() => setCurrentIndex(i)}
+                className={`relative border rounded-[2px] overflow-hidden bg-paperwhite ${
+                  i === currentIndex ? "border-pen-blue ring-1 ring-pen-blue" : "border-line"
+                }`}
+              >
+                <canvas ref={(el) => el && (thumbRefs.current[en.id] = el)} className="block w-full h-auto" />
+                <span className="absolute bottom-1 right-1 font-display text-[10px] bg-ink/80 text-paperwhite px-1 rounded-sm">{i + 1}</span>
+              </button>
             ))}
             <button
               onClick={insertBlankAfterCurrent}
@@ -570,6 +582,36 @@ export default function EditPdfPage() {
             <div className="border-b border-line px-6 py-3 flex flex-wrap items-center gap-2">
               <button className={toolBtn("none", "Select")} onClick={() => setTool("none")}>Select</button>
               <button className={toolBtn("text", "Text")} onClick={() => setTool("text")}>+ Text</button>
+              <button className={toolBtn("edit-text", "Edit text")} onClick={() => setTool("edit-text")}>Edit text</button>
+
+              <select
+                value={selectedTextAnnotation?.fontFamily || "Helvetica"}
+                onChange={handleSelectedTextFontFamilyChange}
+                disabled={!selectedTextAnnotation}
+                aria-label="Text font family"
+                className="font-display text-xs px-2 py-2 rounded-doc border border-line bg-paperwhite text-ink-soft disabled:opacity-40 disabled:pointer-events-none hover:border-ink transition-colors"
+              >
+                {TEXT_FONT_OPTIONS.map((font) => (
+                  <option key={font.value} value={font.value}>
+                    {font.label}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={selectedTextAnnotation?.size || 16}
+                onChange={handleSelectedTextFontSizeChange}
+                disabled={!selectedTextAnnotation}
+                aria-label="Text font size"
+                className="font-display text-xs px-2 py-2 rounded-doc border border-line bg-paperwhite text-ink-soft disabled:opacity-40 disabled:pointer-events-none hover:border-ink transition-colors"
+              >
+                {TEXT_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size}px
+                  </option>
+                ))}
+              </select>
+
               <button className={toolBtn("highlight", "Highlight")} onClick={() => setTool("highlight")}>Highlight</button>
               <button className={toolBtn("draw", "Draw")} onClick={() => setTool("draw")}>Draw</button>
 
@@ -616,7 +658,6 @@ export default function EditPdfPage() {
               {entry && (
                 <div className="relative inline-block shadow-[0_24px_60px_-24px_rgba(28,27,25,0.35)]" style={{ width: canvasSize.w, height: canvasSize.h }}>
                   <canvas ref={canvasRef} className="block bg-paperwhite" />
-                  <div ref={textLayerRef} className="textLayer" />
                   <div
                     ref={overlayRef}
                     onClick={handleOverlayClick}
@@ -624,9 +665,14 @@ export default function EditPdfPage() {
                     onMouseMove={handlePointerMove}
                     onMouseUp={handlePointerUp}
                     onMouseLeave={handlePointerUp}
-                    className={`absolute inset-0 ${tool === "none" ? "pointer-events-none" : ""}`}
+                    className="absolute inset-0"
                     style={{
-                      cursor: tool === "text" ? "text" : tool === "highlight" || tool === "draw" ? "crosshair" : "default",
+                      cursor:
+                      tool === "text" || tool === "edit-text"
+                        ? "text"
+                        : tool === "highlight" || tool === "draw"
+                          ? "crosshair"
+                          : "default",
                     }}
                   >
                     {/* Highlights */}
@@ -648,7 +694,7 @@ export default function EditPdfPage() {
                               e.stopPropagation();
                               setSelectedAnnotationId(ann.id);
                             }}
-                            className={`absolute group cursor-pointer pointer-events-auto ${selected ? "ring-2 ring-pen-red ring-inset" : ""}`}
+                            className={`absolute group cursor-pointer ${selected ? "ring-2 ring-pen-red ring-inset" : ""}`}
                             style={{ left, top, width, height, background: "rgba(255,224,64,0.45)" }}
                           >
                             <button
@@ -665,7 +711,7 @@ export default function EditPdfPage() {
                       })}
 
                     {/* Draw strokes */}
-                    <svg className="absolute inset-0 pointer-events-none" width={canvasSize.w} height={canvasSize.h}>
+                    <svg className="absolute inset-0" width={canvasSize.w} height={canvasSize.h}>
                       {entry.annotations
                         .filter((a) => a.kind === "draw")
                         .map((ann) => {
@@ -678,7 +724,7 @@ export default function EditPdfPage() {
                             .join(" ");
                           const selected = selectedAnnotationId === ann.id;
                           return (
-                            <g key={ann.id} style={{ pointerEvents: "auto" }} onClick={(e) => {
+                            <g key={ann.id} onClick={(e) => {
                               e.stopPropagation();
                               setSelectedAnnotationId(ann.id);
                             }}>
@@ -723,6 +769,43 @@ export default function EditPdfPage() {
                       />
                     )}
 
+                    {/* Existing PDF text editing layer */}
+                    {tool === "edit-text" &&
+                      entry.textItems?.map((item) => {
+                        const selectedEdit = entry.annotations.find(
+                          (ann) => ann.kind === "text-edit" && ann.sourceTextId === item.id
+                        );
+
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              editExistingText(item);
+                            }}
+                            className={`absolute text-left overflow-hidden border ${
+                              selectedEdit?.id === selectedAnnotationId
+                                ? "border-pen-red bg-paperwhite/80"
+                                : "border-transparent hover:border-pen-blue hover:bg-paperwhite/50"
+                            }`}
+                            style={{
+                              left: item.x,
+                              top: item.top,
+                              width: Math.max(item.width, 8),
+                              height: Math.max(item.height, 12),
+                              fontFamily: getTextFontCss(selectedEdit?.fontFamily),
+                              fontSize: (selectedEdit?.size || item.size) * RENDER_SCALE,
+                              lineHeight: `${Math.max(item.height, 12)}px`,
+                              color: "transparent",
+                            }}
+                            title="Click to edit this text"
+                          >
+                            {selectedEdit?.text || item.text}
+                          </button>
+                        );
+                      })}
+
                     {/* Text annotations */}
                     {entry.annotations
                       .filter((a) => a.kind === "text")
@@ -739,7 +822,7 @@ export default function EditPdfPage() {
                               setSelectedAnnotationId(ann.id);
                               setEditingTextId(ann.id);
                             }}
-                            className="absolute group pointer-events-auto"
+                            className="absolute group"
                             style={{ left: d[0], top: d[1] }}
                           >
                             {isEditing ? (
@@ -757,12 +840,12 @@ export default function EditPdfPage() {
                                   setEditingTextId(null);
                                 }}
                                 className="font-annotation text-pen-blue bg-paperwhite/90 border border-pen-blue rounded-[2px] px-1 py-0.5 resize outline-none"
-                                style={{ fontSize: ann.size, minWidth: 120 }}
+                                style={{ fontSize: ann.size, fontFamily: getTextFontCss(ann.fontFamily), minWidth: 120 }}
                               />
                             ) : (
                               <div
                                 className={`font-annotation text-pen-blue cursor-text whitespace-pre-wrap ${selected ? "ring-1 ring-pen-red px-0.5" : ""}`}
-                                style={{ fontSize: ann.size }}
+                                style={{ fontSize: ann.size, fontFamily: getTextFontCss(ann.fontFamily) }}
                               >
                                 {ann.text}
                                 <button
@@ -779,6 +862,83 @@ export default function EditPdfPage() {
                           </div>
                         );
                       })}
+                    {/* Edited existing text */}
+                    {entry.annotations
+                      .filter((a) => a.kind === "text-edit")
+                      .map((ann) => {
+                        const d = toDisplay(entry, ann.x, ann.y + ann.h);
+                        if (!d) return null;
+
+                        const selected = selectedAnnotationId === ann.id;
+                        const isEditing = editingTextId === ann.id;
+
+                        return (
+                          <div
+                            key={ann.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedAnnotationId(ann.id);
+                              setEditingTextId(ann.id);
+                            }}
+                            className={`absolute group ${selected ? "ring-1 ring-pen-red" : ""}`}
+                            style={{
+                              left: d[0],
+                              top: d[1],
+                              minWidth: Math.max(ann.w * RENDER_SCALE, 24),
+                              minHeight: Math.max(ann.h * RENDER_SCALE, 16),
+                              background: "#fff",
+                            }}
+                          >
+                            {isEditing ? (
+                              <textarea
+                                autoFocus
+                                value={ann.text}
+                                onChange={(e) =>
+                                  updateCurrentEntry((en) => ({
+                                    ...en,
+                                    annotations: en.annotations.map((a) =>
+                                      a.id === ann.id ? { ...a, text: e.target.value } : a
+                                    ),
+                                  }))
+                                }
+                                onBlur={() => setEditingTextId(null)}
+                                className="font-annotation text-ink bg-paperwhite border border-pen-blue rounded-[2px] px-1 py-0.5 resize outline-none"
+                                style={{
+                                  fontFamily: getTextFontCss(ann.fontFamily),
+                                  fontSize: ann.size * RENDER_SCALE,
+                                  lineHeight: 1.1,
+                                  minWidth: Math.max(ann.w * RENDER_SCALE, 120),
+                                  minHeight: Math.max(ann.h * RENDER_SCALE, 24),
+                                }}
+                              />
+                            ) : (
+                              <div
+                                className="font-annotation text-ink whitespace-pre-wrap cursor-text px-0.5"
+                                style={{
+                                  fontFamily: getTextFontCss(ann.fontFamily),
+                                  fontSize: ann.size * RENDER_SCALE,
+                                  lineHeight: 1.1,
+                                }}
+                              >
+                                {ann.text}
+                              </div>
+                            )}
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeAnnotation(ann.id);
+                              }}
+                              className={`absolute -top-2 -right-2 flex w-4 h-4 items-center justify-center rounded-full bg-pen-red text-paperwhite text-[10px] leading-none ${
+                                selected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                              }`}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })}
+
                   </div>
                 </div>
               )}
