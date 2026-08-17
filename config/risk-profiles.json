@@ -1,0 +1,358 @@
+[
+  {
+    "toolName": "Bash",
+    "baseRisk": 5,
+    "baseAutonomy": 7,
+    "inputPatterns": [
+      {
+        "pattern": "\\brm\\s+-rf?\\b",
+        "riskDelta": 5,
+        "autonomyDelta": 0,
+        "label": "Destructive file deletion"
+      },
+      {
+        "pattern": "\\bDROP\\s+(TABLE|DATABASE|SCHEMA)\\b",
+        "riskDelta": 5,
+        "autonomyDelta": 1,
+        "label": "Destructive database operation"
+      },
+      {
+        "pattern": "\\b(DELETE|TRUNCATE)\\s+FROM\\b",
+        "riskDelta": 4,
+        "autonomyDelta": 1,
+        "label": "Bulk data deletion"
+      },
+      {
+        "pattern": "\\bgit\\s+push\\b",
+        "riskDelta": 4,
+        "autonomyDelta": 2,
+        "label": "Pushing to remote repository"
+      },
+      {
+        "pattern": "\\bgit\\s+push\\s+--force\\b",
+        "riskDelta": 5,
+        "autonomyDelta": 2,
+        "label": "Force-pushing (rewrites history)"
+      },
+      {
+        "pattern": "\\bgit\\s+commit\\b",
+        "riskDelta": 3,
+        "autonomyDelta": 2,
+        "label": "Creating a commit"
+      },
+      {
+        "pattern": "\\bgit\\s+reset\\s+--hard\\b",
+        "riskDelta": 5,
+        "autonomyDelta": 2,
+        "label": "Hard reset (destructive)"
+      },
+      {
+        "pattern": "\\bgit\\s+rebase\\b",
+        "riskDelta": 4,
+        "autonomyDelta": 2,
+        "label": "Rebase (rewrites history)"
+      },
+      {
+        "pattern": "\\bsudo\\b",
+        "riskDelta": 4,
+        "autonomyDelta": 1,
+        "label": "Elevated privileges"
+      },
+      {
+        "pattern": "\\b(curl|wget)\\s+.*\\|\\s*(bash|sh|zsh)\\b",
+        "riskDelta": 5,
+        "autonomyDelta": 2,
+        "label": "Piping remote script to shell"
+      },
+      {
+        "pattern": "\\bchmod\\s+[0-7]{3,4}\\b",
+        "riskDelta": 3,
+        "autonomyDelta": 1,
+        "label": "Changing file permissions"
+      },
+      {
+        "pattern": "\\b(chown|chgrp)\\b",
+        "riskDelta": 3,
+        "autonomyDelta": 1,
+        "label": "Changing file ownership"
+      },
+      {
+        "pattern": "\\bkill\\s+(-9\\s+)?\\d+\\b",
+        "riskDelta": 3,
+        "autonomyDelta": 1,
+        "label": "Killing processes"
+      },
+      {
+        "pattern": "\\b(npm|yarn|pnpm|bun)\\s+(install|add|remove|uninstall)\\b",
+        "riskDelta": 3,
+        "autonomyDelta": 2,
+        "label": "Modifying dependencies"
+      },
+      {
+        "pattern": "\\b(docker|podman)\\s+(run|exec|build|push|rmi|rm)\\b",
+        "riskDelta": 4,
+        "autonomyDelta": 2,
+        "label": "Container operations"
+      },
+      {
+        "pattern": "\\bterraform\\s+(apply|destroy)\\b",
+        "riskDelta": 5,
+        "autonomyDelta": 2,
+        "label": "Infrastructure changes"
+      },
+      {
+        "pattern": "\\bkubectl\\s+(delete|apply|edit|exec)\\b",
+        "riskDelta": 4,
+        "autonomyDelta": 2,
+        "label": "Kubernetes operations"
+      },
+      {
+        "pattern": "\\b(?:pip|pip3|uv)\\s+install\\b",
+        "riskDelta": 3,
+        "autonomyDelta": 2,
+        "label": "Installing Python packages"
+      },
+      {
+        "pattern": "\\b(?:npm|npx|yarn|pnpm)\\s+(run|test|exec)\\b",
+        "riskDelta": 2,
+        "autonomyDelta": 0,
+        "label": "Running project scripts/tests"
+      },
+      {
+        "pattern": "\\b(?:npm|npx|yarn)\\s+run\\s+(build|lint|typecheck|tsc)\\b",
+        "riskDelta": 1,
+        "autonomyDelta": -2,
+        "label": "Build/lint/typecheck (verification)"
+      },
+      {
+        "pattern": "\\b(?:python3?|pytest|unittest)\\s+.*(?:test|spec)\\b",
+        "riskDelta": 1,
+        "autonomyDelta": -3,
+        "label": "Running tests (verification)"
+      },
+      {
+        "pattern": "\\bgit\\s+status\\b",
+        "riskDelta": -4,
+        "autonomyDelta": -3,
+        "label": "Read-only git status"
+      },
+      {
+        "pattern": "\\bgit\\s+(log|diff|show|branch)\\b",
+        "riskDelta": -4,
+        "autonomyDelta": -3,
+        "label": "Read-only git inspection"
+      },
+      {
+        "pattern": "\\b(ls|cat|head|tail|less|wc|grep|rg|find|file|stat|du|df)\\b",
+        "riskDelta": -3,
+        "autonomyDelta": -2,
+        "label": "Read-only file inspection"
+      },
+      {
+        "pattern": "\\becho\\b",
+        "riskDelta": -3,
+        "autonomyDelta": -3,
+        "label": "Echo (no side effects)"
+      },
+      {
+        "pattern": "\\bexport\\s+\\w+",
+        "riskDelta": -1,
+        "autonomyDelta": -2,
+        "label": "Setting environment variables"
+      },
+      {
+        "pattern": "\\b(?:eslint|prettier|biome|ruff|flake8|mypy|pyright|tsc)\\b",
+        "riskDelta": 1,
+        "autonomyDelta": -3,
+        "label": "Static analysis / linting (verification)"
+      }
+    ]
+  },
+  {
+    "toolName": "Write",
+    "baseRisk": 4,
+    "baseAutonomy": 6,
+    "inputPatterns": [
+      {
+        "pattern": "\\.(env|secret|key|pem|p12|pfx|cred)\\b",
+        "riskDelta": 5,
+        "autonomyDelta": 1,
+        "label": "Writing to secrets/credentials file"
+      },
+      {
+        "pattern": "\\.(sh|bash|zsh)\\b",
+        "riskDelta": 2,
+        "autonomyDelta": 1,
+        "label": "Writing executable script"
+      },
+      {
+        "pattern": "(package\\.json|Cargo\\.toml|pyproject\\.toml|requirements\\.txt|go\\.mod)",
+        "riskDelta": 3,
+        "autonomyDelta": 1,
+        "label": "Modifying dependency manifest"
+      },
+      {
+        "pattern": "(Dockerfile|docker-compose)",
+        "riskDelta": 3,
+        "autonomyDelta": 1,
+        "label": "Writing container configuration"
+      },
+      {
+        "pattern": "\\.(tf|tfvars)\\b",
+        "riskDelta": 4,
+        "autonomyDelta": 1,
+        "label": "Writing infrastructure-as-code"
+      },
+      {
+        "pattern": "\\.(test|spec)\\.",
+        "riskDelta": 1,
+        "autonomyDelta": -1,
+        "label": "Writing test file (verification)"
+      },
+      {
+        "pattern": "\\.(md|txt|rst)\\b",
+        "riskDelta": -1,
+        "autonomyDelta": 0,
+        "label": "Writing documentation"
+      }
+    ]
+  },
+  {
+    "toolName": "Edit",
+    "baseRisk": 3,
+    "baseAutonomy": 5,
+    "inputPatterns": [
+      {
+        "pattern": "\\.(env|secret|key|pem|cred)\\b",
+        "riskDelta": 5,
+        "autonomyDelta": 1,
+        "label": "Editing secrets/credentials file"
+      },
+      {
+        "pattern": "(package\\.json|Cargo\\.toml|pyproject\\.toml|requirements\\.txt|go\\.mod)",
+        "riskDelta": 3,
+        "autonomyDelta": 1,
+        "label": "Editing dependency manifest"
+      },
+      {
+        "pattern": "\\.(test|spec)\\.",
+        "riskDelta": 0,
+        "autonomyDelta": -1,
+        "label": "Editing test file"
+      }
+    ]
+  },
+  {
+    "toolName": "MultiEdit",
+    "baseRisk": 3,
+    "baseAutonomy": 5,
+    "inputPatterns": []
+  },
+  {
+    "toolName": "Read",
+    "baseRisk": 1,
+    "baseAutonomy": 3,
+    "inputPatterns": [
+      {
+        "pattern": "\\.(env|secret|key|pem|cred)\\b",
+        "riskDelta": 3,
+        "autonomyDelta": 0,
+        "label": "Reading secrets/credentials file"
+      }
+    ]
+  },
+  {
+    "toolName": "Glob",
+    "baseRisk": 1,
+    "baseAutonomy": 2,
+    "inputPatterns": []
+  },
+  {
+    "toolName": "Grep",
+    "baseRisk": 1,
+    "autonomy": 2,
+    "baseAutonomy": 2,
+    "inputPatterns": []
+  },
+  {
+    "toolName": "LS",
+    "baseRisk": 1,
+    "baseAutonomy": 2,
+    "inputPatterns": []
+  },
+  {
+    "toolName": "WebFetch",
+    "baseRisk": 3,
+    "baseAutonomy": 5,
+    "inputPatterns": [
+      {
+        "pattern": "https?://(?!localhost|127\\.0\\.0\\.1)",
+        "riskDelta": 1,
+        "autonomyDelta": 0,
+        "label": "Fetching from external URL"
+      }
+    ]
+  },
+  {
+    "toolName": "WebSearch",
+    "baseRisk": 2,
+    "baseAutonomy": 4,
+    "inputPatterns": []
+  },
+  {
+    "toolName": "NotebookEdit",
+    "baseRisk": 3,
+    "baseAutonomy": 5,
+    "inputPatterns": []
+  },
+  {
+    "toolName": "NotebookRead",
+    "baseRisk": 1,
+    "baseAutonomy": 2,
+    "inputPatterns": []
+  },
+  {
+    "toolName": "AskUserQuestion",
+    "baseRisk": 1,
+    "baseAutonomy": 1,
+    "inputPatterns": []
+  },
+  {
+    "toolName": "TodoWrite",
+    "baseRisk": 1,
+    "baseAutonomy": 3,
+    "inputPatterns": []
+  },
+  {
+    "toolName": "Agent",
+    "baseRisk": 4,
+    "baseAutonomy": 8,
+    "inputPatterns": [
+      {
+        "pattern": "subagent|sub-agent|background",
+        "riskDelta": 2,
+        "autonomyDelta": 1,
+        "label": "Spawning background sub-agent"
+      }
+    ]
+  },
+  {
+    "toolName": "Task",
+    "baseRisk": 4,
+    "baseAutonomy": 8,
+    "inputPatterns": []
+  },
+  {
+    "toolName": "MCP",
+    "baseRisk": 5,
+    "baseAutonomy": 7,
+    "inputPatterns": [
+      {
+        "pattern": "(delete|drop|remove|destroy|execute|run|deploy|publish|send|email|payment)",
+        "riskDelta": 3,
+        "autonomyDelta": 1,
+        "label": "High-impact MCP operation"
+      }
+    ]
+  }
+]

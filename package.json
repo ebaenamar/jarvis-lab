@@ -1,0 +1,40 @@
+{
+  "name": "jarvis-lab",
+  "version": "0.1.0",
+  "description": "Human-Agent Control Observatory — metrics framework for meaningful human control in agentic coding sessions",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "jarvis-lab": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "dashboard": "node dist/index.js dashboard",
+    "analyze": "node dist/index.js analyze",
+    "watch": "node dist/index.js watch",
+    "install-hooks": "node dist/index.js install-hooks",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "human-ai",
+    "agentic",
+    "oversight",
+    "meaningful-human-control",
+    "observability",
+    "claude-code",
+    "opentelemetry"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2",
+    "glob": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
